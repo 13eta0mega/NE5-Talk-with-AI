@@ -1,7 +1,7 @@
 import {
   buildSystemInstruction, createClient, expressionTool, isCharacterId, isModelId, isTrustedBrowserRequest, isVoiceName,
   noStore, parseBody, type ApiRequest, type ApiResponse,
-} from "./_shared";
+} from "./_shared.js";
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   noStore(response);
@@ -56,3 +56,4 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     response.status(500).json({ error: error instanceof Error ? error.message : "Live 토큰을 만들지 못했습니다." });
   }
 }
+

@@ -1,0 +1,22 @@
+{
+  "name": "DeskPet · Gemini Live Companion",
+  "short_name": "DeskPet",
+  "description": "감정 표현과 음성 대화를 지원하는 설치형 데스크 펫",
+  "lang": "ko-KR",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f9faff",
+  "theme_color": "#2b2833",
+  "icons": [
+    {
+      "src": "/characters/pet-orbit-bot.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["entertainment", "lifestyle", "utilities"]
+}

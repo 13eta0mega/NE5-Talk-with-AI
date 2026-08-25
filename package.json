@@ -1,0 +1,30 @@
+{
+  "name": "desk-pet-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Installable Gemini Live DeskPet PWA for Android and iPhone",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "build:web": "vite build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.api.json --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "2.18.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

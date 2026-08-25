@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" role="img" aria-labelledby="title desc">
+  <title id="title">pet-cloud-bot</title><desc id="desc">Layered semantic SVG redrawn from ANIMATION_PIPELINE_GUIDE.md; head, face, limbs and ornaments are independently animatable.</desc>
+  <defs>
+    <radialGradient id="skin" cx="43%" cy="35%" r="72%"><stop stop-color="#F1EEFF"/><stop offset=".68" stop-color="#CFC8FF"/><stop offset="1" stop-color="#CFC8FF"/></radialGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff" stop-opacity=".28"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#342A62" stop-opacity=".1"/></linearGradient>
+    <filter id="soft-shadow" x="-25%" y="-25%" width="150%" height="165%"><feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#000" flood-opacity=".2"/></filter>
+    <style>#pet-root{transform-origin:500px 530px;animation:idle 3.2s ease-in-out infinite}#eye-left,#eye-right{transform-box:fill-box;transform-origin:center;animation:blink 4.8s ease-in-out infinite}#ornament-left{transform-origin:380px 240px;animation:wobble 3.2s ease-in-out infinite}#ornament-right{transform-origin:620px 240px;animation:wobbleR 3.2s ease-in-out infinite}@keyframes idle{50%{transform:translateY(-7px) rotate(.7deg)}}@keyframes blink{0%,44%,48%,100%{transform:scaleY(1)}46%{transform:scaleY(.08)}}@keyframes wobble{50%{transform:rotate(2.5deg)}}@keyframes wobbleR{50%{transform:rotate(-2.5deg)}}</style>
+  </defs>
+  <g id="pet-root" fill="url(#skin)" stroke="#342A62" stroke-width="27" stroke-linecap="round" stroke-linejoin="round" filter="url(#soft-shadow)">
+    <g id="tail"/>
+    <g id="body"><g id="arm-left"><path d="M424 770C391 760 360 783 358 810C356 834 377 847 398 833C414 822 423 802 434 786Z"/></g><g id="arm-right"><path d="M576 770C609 760 640 783 642 810C644 834 623 847 602 833C586 822 577 802 566 786Z"/></g><path id="torso" d="M415 724C393 753 392 803 400 858L404 889C409 944 460 967 486 919H514C540 967 591 944 596 889L600 858C608 803 607 753 585 724Z"/><path d="M434 746C470 731 530 731 566 746" fill="none" stroke="#fff" stroke-width="10" opacity=".12"/></g>
+    <g id="head"><g id="ornament-left"><path d="M366 231C342 168 358 103 416 75" fill="none"/><circle cx="441" cy="63" r="34" fill="#A88CFF"/></g><g id="ornament-right"/><path id="head-shape" d="M184 482C184 341 262 250 380 220C420 157 528 143 589 202C715 203 817 309 817 474C817 648 697 742 500 742S184 649 184 482Z"/><path d="M255 386C306 275 403 236 500 236C628 236 704 295 750 385" fill="none" stroke="url(#shine)" stroke-width="24" opacity=".62"/>
+      <g id="face" fill="#342A62" stroke="none"><ellipse id="eye-left" cx="388" cy="584" rx="24" ry="31"/><ellipse id="eye-right" cx="612" cy="584" rx="24" ry="31"/><circle cx="381" cy="576" r="5" fill="#fff" stroke="none" opacity=".82"/><circle cx="605" cy="576" r="5" fill="#fff" stroke="none" opacity=".82"/><ellipse id="cheek-left" cx="339" cy="653" rx="34" ry="15" fill="#F486A8" opacity="0"/><ellipse id="cheek-right" cx="661" cy="653" rx="34" ry="15" fill="#F486A8" opacity="0"/><path id="mouth" d="M446.64 629.152C474.3872 639.4 525.6128 639.4 553.36 629.152C526.68 645.4 473.32 645.4 446.64 629.152Z"/><g id="brow-left"/><g id="brow-right"/></g>
+    </g>
+  </g>
+</svg>

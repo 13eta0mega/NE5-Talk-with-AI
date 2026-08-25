@@ -1,4 +1,4 @@
-import { createClient, isTrustedBrowserRequest, noStore, type ApiRequest, type ApiResponse } from "./_shared";
+import { createClient, isTrustedBrowserRequest, noStore, type ApiRequest, type ApiResponse } from "./_shared.js";
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   noStore(response);
@@ -27,3 +27,4 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     response.status(500).json({ error: error instanceof Error ? error.message : "Live 모델 목록을 불러오지 못했습니다." });
   }
 }
+

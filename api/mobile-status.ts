@@ -1,4 +1,4 @@
-import { noStore, type ApiRequest, type ApiResponse } from "./_shared";
+import { noStore, type ApiRequest, type ApiResponse } from "./_shared.js";
 
 export default function handler(request: ApiRequest, response: ApiResponse): void {
   noStore(response);
@@ -8,3 +8,4 @@ export default function handler(request: ApiRequest, response: ApiResponse): voi
   }
   response.status(200).json({ hasApiKey: Boolean(process.env.GEMINI_API_KEY?.trim()) });
 }
+

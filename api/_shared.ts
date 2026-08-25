@@ -1,8 +1,14 @@
 /// <reference types="node" />
 
 import { GoogleGenAI } from "@google/genai";
-import { buildSystemInstruction, PERSONA_IDS, type CharacterId } from "./persona.js";
-import { VOICE_CATALOG } from "./catalog.js";
+import * as personaNamespace from "../electron/personaVault.js";
+import * as catalogNamespace from "../src/core/gemini/catalog.js";
+
+type CharacterId = import("../electron/personaVault.js").CharacterId;
+const personaModule = ((personaNamespace as { default?: unknown }).default ?? personaNamespace) as typeof import("../electron/personaVault.js");
+const catalogModule = ((catalogNamespace as { default?: unknown }).default ?? catalogNamespace) as typeof import("../src/core/gemini/catalog.js");
+const { buildSystemInstruction, PERSONA_IDS } = personaModule;
+const { VOICE_CATALOG } = catalogModule;
 
 export type ApiRequest = {
   method?: string;

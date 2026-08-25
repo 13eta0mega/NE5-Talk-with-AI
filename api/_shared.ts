@@ -1,8 +1,8 @@
 /// <reference types="node" />
 
 import { GoogleGenAI } from "@google/genai";
-import { buildSystemInstruction, PERSONA_IDS, type CharacterId } from "../electron/personaVault.js";
-import { VOICE_CATALOG } from "../src/core/gemini/catalog.js";
+import { buildSystemInstruction, PERSONA_IDS, type CharacterId } from "./persona.js";
+import { VOICE_CATALOG } from "./catalog.js";
 
 export type ApiRequest = {
   method?: string;

@@ -1,6 +1,7 @@
 {
   "name": "desk-pet-mobile",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "description": "Installable Gemini Live DeskPet PWA for Android and iPhone",
   "engines": {

@@ -3,6 +3,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { buildSystemInstruction, PERSONA_IDS, type CharacterId } from "../electron/personaVault.js";
 import { VOICE_CATALOG } from "../src/core/gemini/catalog.js";
+import { EMOTION_IDS } from "../src/core/types.js";
 
 export type ApiRequest = {
   method?: string;
@@ -65,10 +66,7 @@ export function expressionTool() {
     parameters: {
       type: "OBJECT",
       properties: {
-        emotion: { type: "STRING", enum: [
-          "neutral", "happy", "joyful", "excited", "affectionate", "proud", "curious", "surprised",
-          "shy", "sleepy", "sad", "lonely", "worried", "afraid", "angry", "confused",
-        ] },
+        emotion: { type: "STRING", enum: [...EMOTION_IDS] },
         intensity: { type: "NUMBER", minimum: 0, maximum: 1 },
         gesture: { type: "STRING" },
         hold_ms: { type: "INTEGER", minimum: 0, maximum: 10000 },

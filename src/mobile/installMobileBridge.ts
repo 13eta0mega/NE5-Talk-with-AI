@@ -19,7 +19,7 @@ type StoredSession = LogicalSessionPublic & {
 const defaultSettings: StoredSettings = {
   selectedVoiceName: DEFAULT_VOICE_NAME,
   selectedModelId: DEFAULT_LIVE_MODEL,
-  selectedCharacterId: "pet-rabbit-pink",
+  selectedCharacterId: "greus-greeny",
   microphoneId: "default",
   speakerId: "default",
   transcriptEnabled: true,

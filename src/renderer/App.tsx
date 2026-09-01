@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CHARACTERS, characterById } from "../characters/catalog";
+import { characterById } from "../characters/catalog";
 import { ConversationCoordinator, type ConversationSnapshot } from "../core/conversation/ConversationCoordinator";
-import { EMOTION_IDS, type ConversationPhase, type EmotionId, type LiveModelOption, type SecureSettingsPublic } from "../core/types";
+import { EMOTION_IDS, normalizeEmotionId, type ConversationPhase, type EmotionId, type LiveModelOption, type SecureSettingsPublic } from "../core/types";
 import { DEFAULT_LIVE_MODEL, DEFAULT_VOICE_NAME } from "../core/gemini/catalog";
 import { EMOTION_META } from "../core/emotion";
 import { CharacterPicker } from "./components/CharacterPicker";
 import { PetStage } from "./components/PetStage";
+import { IDLE_ACTIONS, type IdleAction } from "./components/GreusCat";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 
 const INITIAL_SNAPSHOT: ConversationSnapshot = {
@@ -29,16 +30,21 @@ const readableError = (error: unknown, fallback: string) => {
   return raw.replace(/^Error invoking remote method '[^']+': Error:\s*/, "");
 };
 
+const IDLE_ACTION_LABEL: Record<(typeof IDLE_ACTIONS)[number], string> = {
+  "air-punch": "냥냥 펀치", sleep: "잠자기", stretch: "기지개", groom: "세수하기",
+  yawn: "하품", knead: "꾹꾹이", butterfly: "나비 사냥",
+};
+
 export default function App() {
   const coordinator = useMemo(() => new ConversationCoordinator(), []);
   const [snapshot, setSnapshot] = useState(INITIAL_SNAPSHOT);
-  const [characterId, setCharacterId] = useState(() => localStorage.getItem("deskpet:selected-character") ?? CHARACTERS[0].id);
+  const [characterId, setCharacterId] = useState(() => characterById(localStorage.getItem("deskpet:selected-character") ?? "").id);
   const [voice, setVoice] = useState<string>(DEFAULT_VOICE_NAME);
   const [modelId, setModelId] = useState<string>(DEFAULT_LIVE_MODEL);
   const [secureSettings, setSecureSettings] = useState<SecureSettingsPublic>();
   const [liveModels, setLiveModels] = useState<LiveModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [emotion, setEmotion] = useState<EmotionId>("neutral");
+  const [emotion, setEmotion] = useState<EmotionId>("idle");
   const [emotionIntensity, setEmotionIntensity] = useState(1);
   const [inputLevel, setInputLevel] = useState(0);
   const [mouthLevel, setMouthLevel] = useState(0);
@@ -51,6 +57,8 @@ export default function App() {
   const [transcriptEnabled, setTranscriptEnabled] = useState(true);
   const [notice, setNotice] = useState<string>();
   const [demoPhase, setDemoPhase] = useState<ConversationPhase>();
+  const [customColor, setCustomColor] = useState(() => localStorage.getItem("deskpet:custom-coat") ?? "#8fd6ff");
+  const [idlePreview, setIdlePreview] = useState<IdleAction | "auto">("auto");
   const demoRun = useRef(0);
   const profile = characterById(characterId);
   const phase = demoPhase ?? snapshot.phase;
@@ -69,7 +77,7 @@ export default function App() {
       setSecureSettings(settings);
       setVoice(settings.selectedVoiceName || DEFAULT_VOICE_NAME);
       setModelId(settings.selectedModelId || DEFAULT_LIVE_MODEL);
-      setCharacterId(settings.selectedCharacterId || CHARACTERS[0].id);
+      setCharacterId(characterById(settings.selectedCharacterId || "").id);
       setMicrophoneId(settings.microphoneId || "default");
       setSpeakerId(settings.speakerId || "default");
       setTranscriptEnabled(settings.transcriptEnabled !== false);
@@ -89,7 +97,7 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("deskpet:selected-character", characterId);
     void window.deskPet?.session.get(characterId).then((session) => {
-      if (session.lastEmotion) setEmotion(session.lastEmotion);
+      if (session.lastEmotion) setEmotion(normalizeEmotionId(session.lastEmotion));
     });
   }, [characterId]);
 
@@ -140,9 +148,21 @@ export default function App() {
     setPickerOpen(false);
     setCharacterId(id);
     void window.deskPet?.settings.savePreferences({ characterId: id });
-    setEmotion("neutral");
+    setEmotion("idle");
     setEmotionIntensity(1);
+    setIdlePreview("auto");
     await coordinator.switchCharacter(id, voice, modelId);
+  };
+
+  const previewIdleAction = (next: IdleAction | "auto") => {
+    if (next === "auto") {
+      setIdlePreview("auto");
+      return;
+    }
+    setEmotion("idle");
+    setEmotionIntensity(1);
+    setIdlePreview("none");
+    window.requestAnimationFrame(() => setIdlePreview(next));
   };
 
   const changeVoice = async (name: string) => {
@@ -200,7 +220,7 @@ export default function App() {
     if (demoRun.current !== run) return;
     setInputLevel(0);
     setDemoPhase("thinking");
-    setEmotion("worried");
+    setEmotion("thinking");
     await delay(950);
     if (demoRun.current !== run) return;
     setDemoPhase("speaking");
@@ -245,7 +265,7 @@ export default function App() {
 
         <section className="pet-viewport" aria-live="polite">
           <div className={`status-aura ${phase}`} style={{ "--pet-color": profile.base } as React.CSSProperties} />
-          <PetStage profile={profile} emotion={emotion} intensity={emotionIntensity} phase={phase} mouthLevel={mouthLevel} inputLevel={inputLevel} />
+          <PetStage profile={profile} emotion={emotion} intensity={emotionIntensity} phase={phase} mouthLevel={mouthLevel} inputLevel={inputLevel} customColor={customColor} idleAction={idlePreview} />
           <div className={`status-pill ${phase}`}><i /><span>{status.label}</span></div>
         </section>
 
@@ -276,12 +296,20 @@ export default function App() {
       <section className="emotion-lab">
         <div><span className="eyebrow">EXPRESSION LAB</span><strong>{EMOTION_META[emotion].label}</strong></div>
         <div className="emotion-scroll">
-          {EMOTION_IDS.map((id) => <button key={id} className={emotion === id ? "active" : ""} onClick={() => { setEmotion(id); setEmotionIntensity(1); }}>{EMOTION_META[id].label}</button>)}
+          {EMOTION_IDS.map((id) => <button key={id} className={emotion === id ? "active" : ""} onClick={() => { setIdlePreview("auto"); setEmotion(id); setEmotionIntensity(1); }}>{EMOTION_META[id].label}</button>)}
+        </div>
+      </section>
+
+      <section className="emotion-lab motion-lab">
+        <div><span className="eyebrow">MOTION LAB</span><strong>{idlePreview === "auto" ? "자동 동작" : idlePreview === "none" ? "준비 중" : IDLE_ACTION_LABEL[idlePreview]}</strong></div>
+        <div className="emotion-scroll">
+          <button className={idlePreview === "auto" ? "active" : ""} onClick={() => previewIdleAction("auto")}>자동</button>
+          {IDLE_ACTIONS.map((action) => <button key={action} className={idlePreview === action ? "active" : ""} onClick={() => previewIdleAction(action)}>{IDLE_ACTION_LABEL[action]}</button>)}
         </div>
       </section>
 
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
-      {pickerOpen && <CharacterPicker selected={characterId} onSelect={(id) => void selectCharacter(id)} onClose={() => setPickerOpen(false)} />}
+      {pickerOpen && <CharacterPicker selected={characterId} customColor={customColor} onCustomColor={(color) => { setCustomColor(color); localStorage.setItem("deskpet:custom-coat", color); void selectCharacter("greus-custom"); }} onSelect={(id) => void selectCharacter(id)} onClose={() => setPickerOpen(false)} />}
       <div className={`drawer-scrim ${settingsOpen ? "visible" : ""}`} onClick={() => setSettingsOpen(false)} />
       <SettingsDrawer
         open={settingsOpen} onClose={() => setSettingsOpen(false)} voice={voice} onVoice={(name) => void changeVoice(name)}

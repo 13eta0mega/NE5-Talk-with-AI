@@ -25,7 +25,7 @@ export class ConversationCoordinator {
   };
   private listeners = new Set<(value: ConversationSnapshot) => void>();
   private expressionListener?: (emotion: EmotionId, intensity: number) => void;
-  private characterId = "pet-rabbit-pink";
+  private characterId = "greus-greeny";
   private voiceName = "Kore";
   private modelId = "gemini-3.1-flash-live-preview";
   private generationComplete = false;
@@ -33,7 +33,7 @@ export class ConversationCoordinator {
   private reconnecting = false;
   private desiredListening = false;
   private microphoneDeviceId = "default";
-  private lastEmotion: EmotionId = "neutral";
+  private lastEmotion: EmotionId = "idle";
   private lastEmotionIntensity = 1;
   private disposed = false;
   private inputTranscriptOpen = false;
@@ -122,7 +122,7 @@ export class ConversationCoordinator {
     this.audio.gate.close();
     this.audio.flushPlayback();
     this.desiredListening = false;
-    this.lastEmotion = "neutral";
+    this.lastEmotion = "idle";
     this.lastEmotionIntensity = 1;
     await this.audio.stopCapture();
     await this.provider.close();

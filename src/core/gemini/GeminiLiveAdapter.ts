@@ -1,5 +1,5 @@
 import { GoogleGenAI, Modality } from "@google/genai";
-import { EMOTION_IDS, type EmotionId, type GestureId, type ProviderEvent } from "../types";
+import { EMOTION_IDS, normalizeEmotionId, type GestureId, type ProviderEvent } from "../types";
 import { int16ToBase64 } from "../audio/pcm";
 
 type Subscriber = (event: ProviderEvent) => void;
@@ -148,7 +148,7 @@ export class GeminiLiveAdapter {
     if (calls.length) {
       const responses = calls.map((call: any) => {
         if (call.name === "set_pet_expression") {
-          const emotion = EMOTION_IDS.includes(call.args?.emotion) ? call.args.emotion as EmotionId : "neutral";
+          const emotion = normalizeEmotionId(call.args?.emotion);
           const intensity = Math.max(0, Math.min(1, Number(call.args?.intensity ?? 0.7)));
           const gesture = GESTURES.has(call.args?.gesture) ? call.args.gesture as GestureId : undefined;
           this.emit({ type: "expression", emotion, intensity, gesture });

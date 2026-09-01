@@ -5,7 +5,7 @@ export const PERSONA_IDS = [
 export type CharacterId = (typeof PERSONA_IDS)[number];
 
 const PERSONA_NAME: Record<CharacterId, string> = {
-  "greus-greeny": "초록냥", "greus-cheese": "치즈냥", "greus-calico": "삼색냥",
+  "greus-greeny": "그린냥", "greus-cheese": "치즈냥", "greus-calico": "삼색냥",
   "greus-black": "검은냥", "greus-custom": "커스텀냥",
 };
 

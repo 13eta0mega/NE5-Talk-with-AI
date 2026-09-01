@@ -8,6 +8,7 @@ import { CharacterPicker } from "./components/CharacterPicker";
 import { PetStage } from "./components/PetStage";
 import { IDLE_ACTIONS, type IdleAction } from "./components/GreusCat";
 import { SettingsDrawer } from "./components/SettingsDrawer";
+import { EMOTION_AUDIO_ACTIVITY_THRESHOLD, shouldResetEmotion } from "./emotionReset";
 
 const INITIAL_SNAPSHOT: ConversationSnapshot = {
   phase: "disconnected", inputTranscript: "", outputTranscript: "", resumed: false, reconnectCount: 0,
@@ -60,8 +61,14 @@ export default function App() {
   const [customColor, setCustomColor] = useState(() => localStorage.getItem("deskpet:custom-coat") ?? "#8fd6ff");
   const [idlePreview, setIdlePreview] = useState<IdleAction | "auto">("auto");
   const demoRun = useRef(0);
+  const emotionRef = useRef<EmotionId>(emotion);
+  const phaseRef = useRef<ConversationPhase>(INITIAL_SNAPSHOT.phase);
+  const inputLevelRef = useRef(0);
+  const mouthLevelRef = useRef(0);
+  const lastEmotionActivityAt = useRef(Date.now());
   const profile = characterById(characterId);
   const phase = demoPhase ?? snapshot.phase;
+  const audioCapabilities = coordinator.audio.deviceCapabilities;
 
   useEffect(() => coordinator.subscribe(setSnapshot), [coordinator]);
   const refreshModels = async () => {
@@ -79,11 +86,13 @@ export default function App() {
       setModelId(settings.selectedModelId || DEFAULT_LIVE_MODEL);
       setCharacterId(characterById(settings.selectedCharacterId || "").id);
       setMicrophoneId(settings.microphoneId || "default");
-      setSpeakerId(settings.speakerId || "default");
+      const nextSpeakerId = audioCapabilities.speakerSelection ? settings.speakerId || "default" : "default";
+      setSpeakerId(nextSpeakerId);
+      void coordinator.audio.setOutputDevice(nextSpeakerId).catch((error) => setNotice(error.message));
       setTranscriptEnabled(settings.transcriptEnabled !== false);
       if (settings.hasApiKey) void refreshModels();
     });
-  }, []);
+  }, [audioCapabilities.speakerSelection, coordinator]);
   useEffect(() => {
     coordinator.onExpression((nextEmotion, intensity) => {
       setEmotion(nextEmotion);
@@ -100,6 +109,41 @@ export default function App() {
       if (session.lastEmotion) setEmotion(normalizeEmotionId(session.lastEmotion));
     });
   }, [characterId]);
+
+  useEffect(() => {
+    emotionRef.current = emotion;
+    if (emotion !== "idle" && emotion !== "listening") lastEmotionActivityAt.current = Date.now();
+  }, [emotion]);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+    inputLevelRef.current = inputLevel;
+    mouthLevelRef.current = mouthLevel;
+    if (
+      ["connecting", "reconnecting", "thinking", "speaking"].includes(phase)
+      || inputLevel >= EMOTION_AUDIO_ACTIVITY_THRESHOLD
+      || mouthLevel >= EMOTION_AUDIO_ACTIVITY_THRESHOLD
+    ) {
+      lastEmotionActivityAt.current = Date.now();
+    }
+  }, [phase, inputLevel, mouthLevel]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!shouldResetEmotion({
+        emotion: emotionRef.current,
+        phase: phaseRef.current,
+        inputLevel: inputLevelRef.current,
+        mouthLevel: mouthLevelRef.current,
+        lastActivityAt: lastEmotionActivityAt.current,
+        now: Date.now(),
+      })) return;
+      lastEmotionActivityAt.current = Date.now();
+      setIdlePreview("auto");
+      coordinator.resetExpression();
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [coordinator]);
 
   useEffect(() => () => { void coordinator.dispose(); }, [coordinator]);
 
@@ -213,7 +257,7 @@ export default function App() {
     setNotice("데모 모드: 실제 Gemini 연결 없이 상태·감정·립싱크를 시연합니다.");
     setDemoPhase("listening");
     setEmotion("curious");
-    for (let i = 0; i < 18 && demoRun.current === run; i += 1) {
+    for (let i = 0; i < 46 && demoRun.current === run; i += 1) {
       setInputLevel(0.08 + Math.random() * 0.6);
       await delay(70);
     }
@@ -258,7 +302,7 @@ export default function App() {
         <div className="dot-pattern" aria-hidden="true" />
         <section className="pet-info">
           <span className="eyebrow light">YOUR DESK COMPANION</span>
-          <h1>안녕,<br /><em>{profile.displayName}</em>야.</h1>
+          <h1>안녕,<br /><em>{profile.displayName}</em>!</h1>
           <p>{profile.teaser}.<br />네 이야기를 들려줘.</p>
           <button className="change-pet" onClick={() => setPickerOpen(true)}><span>친구 바꾸기</span><b>→</b></button>
         </section>
@@ -316,10 +360,12 @@ export default function App() {
         modelId={modelId} onModel={(id) => void changeModel(id)} liveModels={liveModels} modelsLoading={modelsLoading}
         onRefreshModels={() => void refreshModels()} secureSettings={secureSettings} onSaveApiKey={saveApiKey} onClearApiKey={clearApiKey}
         microphones={microphones} speakers={speakers} microphoneId={microphoneId} speakerId={speakerId}
-        onMicrophone={(id) => { setMicrophoneId(id); void window.deskPet?.settings.savePreferences({ microphoneId: id }); if (snapshot.phase === "listening") void coordinator.audio.startCapture(id); }}
+        onMicrophone={(id) => { setMicrophoneId(id); void window.deskPet?.settings.savePreferences({ microphoneId: id }); void coordinator.changeMicrophoneDevice(id).catch((error) => setNotice(error.message)); }}
         onSpeaker={(id) => { setSpeakerId(id); void window.deskPet?.settings.savePreferences({ speakerId: id }); void coordinator.audio.setOutputDevice(id).catch((error) => setNotice(error.message)); }}
         inputLevel={inputLevel} transcriptEnabled={transcriptEnabled} onTranscriptEnabled={(value) => { setTranscriptEnabled(value); void window.deskPet?.settings.savePreferences({ transcriptEnabled: value }); }}
         onRefreshDevices={() => void refreshDevices(true)}
+        microphoneSelectionSupported={audioCapabilities.microphoneSelection}
+        speakerSelectionSupported={audioCapabilities.speakerSelection}
       />
     </div>
   );

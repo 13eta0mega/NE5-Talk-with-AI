@@ -58,7 +58,7 @@ export type GreusCatHandle = { transitionTo: (emotion: Emotion) => void };
 export const BLINK_DELAY_RANGE_MS = [3000, 6000] as const;
 export const LISTENING_EAR_DELAY_RANGE_MS = [2000, 5000] as const;
 export const MICROPHONE_EAR_SAMPLE_RANGE_MS = [1000, 3000] as const;
-export const MICROPHONE_TRIGGER_THRESHOLD = .18;
+export const MICROPHONE_TRIGGER_THRESHOLD = .075;
 export const BLINK_HOLD_MS = 230;
 export const PETTING_HOVER_DELAY_MS = 360;
 
@@ -356,7 +356,9 @@ function stagedFacePose(
     const speakingFace = facePoseFor("happy");
     pose = {
       ...pose,
-      mouthLine: speakingFace.mouthLine,
+      // The open speaking mouth replaces the resting ω lip. Keeping both paths
+      // visible creates the doubled mouth seen on narrow/mobile layouts.
+      mouthLine: MOUTH_LINE_HIDDEN,
       mouthOuter: speakingFace.mouthOuter,
       mouthInner: speakingFace.mouthInner,
     };
@@ -557,6 +559,7 @@ export const GreusCat = forwardRef<GreusCatHandle, GreusCatProps>(
     const microphoneEarTimer = useRef(0);
     const microphoneEarResetTimer = useRef(0);
     const microphoneLevelRef = useRef(microphoneLevel);
+    const microphonePeakRef = useRef(microphoneLevel);
     const autoIdleActionRef = useRef<IdleAction>("none");
     const idleActionBagRef = useRef<(typeof IDLE_ACTIONS)[number][]>([]);
     const initialFace = useRef(facePoseFor(emotion));
@@ -842,7 +845,8 @@ export const GreusCat = forwardRef<GreusCatHandle, GreusCatProps>(
 
     useEffect(() => {
       microphoneLevelRef.current = micLevel;
-    }, [micLevel]);
+      if (microphoneActive) microphonePeakRef.current = Math.max(microphonePeakRef.current, micLevel);
+    }, [micLevel, microphoneActive]);
 
     useEffect(() => {
       window.clearTimeout(microphoneEarTimer.current);
@@ -850,23 +854,26 @@ export const GreusCat = forwardRef<GreusCatHandle, GreusCatProps>(
 
       if (
         !microphoneActive
-        || visualEmotion !== "listening"
         || activeIdleAction !== "none"
         || petting
         || prefersReducedMotion()
       ) {
         setNextEarDelayMs(0);
+        microphonePeakRef.current = 0;
         if (microphoneActive) setEarTwitch("none");
         return;
       }
 
       let disposed = false;
+      microphonePeakRef.current = microphoneLevelRef.current;
       const scheduleSample = () => {
         const delay = randomBetween(MICROPHONE_EAR_SAMPLE_RANGE_MS);
         setNextEarDelayMs(Math.round(delay));
         microphoneEarTimer.current = window.setTimeout(() => {
           if (disposed) return;
-          if (microphoneLevelRef.current >= MICROPHONE_TRIGGER_THRESHOLD) {
+          const peak = microphonePeakRef.current;
+          microphonePeakRef.current = microphoneLevelRef.current;
+          if (peak >= MICROPHONE_TRIGGER_THRESHOLD) {
             const options = ["left", "right", "both"] as const;
             setEarTwitch(options[Math.floor(randomUnit() * options.length)]);
             window.clearTimeout(microphoneEarResetTimer.current);
@@ -885,7 +892,7 @@ export const GreusCat = forwardRef<GreusCatHandle, GreusCatProps>(
         window.clearTimeout(microphoneEarTimer.current);
         window.clearTimeout(microphoneEarResetTimer.current);
       };
-    }, [microphoneActive, visualEmotion, activeIdleAction, petting]);
+    }, [microphoneActive, activeIdleAction, petting]);
 
     useEffect(() => {
       const shouldRun = enableIdleActions

@@ -9,7 +9,7 @@ export interface CharacterProfile {
 }
 
 export const CHARACTERS: CharacterProfile[] = [
-  { id: "greus-greeny", displayName: "초록냥", teaser: "싱그럽고 다정한 그루스 고양이", coat: "greeny", base: "#a8ff2f" },
+  { id: "greus-greeny", displayName: "그린냥", teaser: "싱그럽고 다정한 그루스 고양이", coat: "greeny", base: "#a8ff2f" },
   { id: "greus-cheese", displayName: "치즈냥", teaser: "포근하고 장난기 많은 그루스 고양이", coat: "cheese", base: "#f4c66a" },
   { id: "greus-calico", displayName: "삼색냥", teaser: "호기심 많고 당당한 그루스 고양이", coat: "calico", base: "#fbf4e7" },
   { id: "greus-black", displayName: "검은냥", teaser: "차분하고 눈빛이 반짝이는 그루스 고양이", coat: "black", base: "#292a25" },

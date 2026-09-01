@@ -2,6 +2,10 @@ import { AudioGate } from "./AudioGate";
 import { resamplePcm16 } from "./pcm";
 
 type DeviceSnapshot = { microphones: MediaDeviceInfo[]; speakers: MediaDeviceInfo[] };
+export type AudioDeviceCapabilities = {
+  microphoneSelection: boolean;
+  speakerSelection: boolean;
+};
 
 export class AudioEngine {
   readonly gate = new AudioGate();
@@ -19,7 +23,20 @@ export class AudioEngine {
   onOutputLevel?: (level: number) => void;
   onCapturePcm?: (chunk: Int16Array) => void;
 
+  get deviceCapabilities(): AudioDeviceCapabilities {
+    const audioContextPrototype = typeof AudioContext === "undefined" ? undefined : AudioContext.prototype as AudioContext & {
+      setSinkId?: (sinkId: string) => Promise<void>;
+    };
+    return {
+      microphoneSelection: Boolean(navigator.mediaDevices?.enumerateDevices),
+      speakerSelection: typeof audioContextPrototype?.setSinkId === "function",
+    };
+  }
+
   async listDevices(requestPermission = false): Promise<DeviceSnapshot> {
+    if (!navigator.mediaDevices?.enumerateDevices || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error("이 브라우저에서는 마이크 장치 API를 사용할 수 없습니다. HTTPS 주소에서 열어 주세요.");
+    }
     if (requestPermission) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
@@ -103,8 +120,11 @@ export class AudioEngine {
   }
 
   async setOutputDevice(deviceId: string): Promise<void> {
-    this.outputDeviceId = deviceId;
     const context = this.playbackContext as AudioContext & { setSinkId?: (sinkId: string) => Promise<void> };
+    if (deviceId !== "default" && !this.deviceCapabilities.speakerSelection) {
+      throw new Error("이 스마트폰 브라우저는 개별 스피커 선택을 지원하지 않습니다. 휴대폰의 시스템 출력 장치를 사용해 주세요.");
+    }
+    this.outputDeviceId = deviceId;
     if (context?.setSinkId) await context.setSinkId(deviceId);
   }
 

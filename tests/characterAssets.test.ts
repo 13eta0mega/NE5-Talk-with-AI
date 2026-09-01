@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "../src/characters/catalog";
-import { COATS, IDLE_ACTIONS } from "../src/renderer/components/GreusCat";
+import { COATS, IDLE_ACTIONS, MICROPHONE_TRIGGER_THRESHOLD } from "../src/renderer/components/GreusCat";
 import { PERSONA_IDS } from "../electron/personaVault";
 
 describe("Greus Cat character replacement", () => {
@@ -11,6 +11,7 @@ describe("Greus Cat character replacement", () => {
     expect(CHARACTERS.map((item) => item.coat)).toEqual([...COATS]);
     expect(CHARACTERS.every((item) => item.id.startsWith("greus-"))).toBe(true);
     expect(CHARACTERS.map((item) => item.id)).toEqual([...PERSONA_IDS]);
+    expect(CHARACTERS[0].displayName).toBe("그린냥");
   });
 
   it("removes every legacy character asset and retains one semantic SVG rig", async () => {
@@ -21,5 +22,8 @@ describe("Greus Cat character replacement", () => {
       expect(source).toContain(id);
     }
     expect(IDLE_ACTIONS).toHaveLength(7);
+    expect(source).toMatch(/if \(isSpeaking[\s\S]*?mouthLine: MOUTH_LINE_HIDDEN/);
+    expect(source).toContain("microphonePeakRef");
+    expect(MICROPHONE_TRIGGER_THRESHOLD).toBeLessThan(.1);
   });
 });

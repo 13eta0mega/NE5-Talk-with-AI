@@ -55,6 +55,17 @@ export class ConversationCoordinator {
     this.expressionListener = listener;
   }
 
+  resetExpression(): void {
+    this.lastEmotion = "idle";
+    this.lastEmotionIntensity = 1;
+    this.expressionListener?.("idle", 1);
+  }
+
+  async changeMicrophoneDevice(deviceId: string): Promise<void> {
+    this.microphoneDeviceId = deviceId;
+    if (this.desiredListening) await this.audio.startCapture(deviceId);
+  }
+
   private update(patch: Partial<ConversationSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch };
     this.listeners.forEach((listener) => listener(this.snapshot));

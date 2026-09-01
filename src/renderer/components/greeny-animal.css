@@ -135,7 +135,6 @@
   transform-box: view-box;
   transform-origin: 120px 139px;
   transition:
-    opacity 180ms ease 140ms,
     transform calc(var(--cat-duration) * .72) var(--cat-ease),
     stroke-width calc(var(--cat-duration) * .55) var(--cat-ease),
     stroke calc(var(--cat-duration) * .55) ease;
@@ -524,15 +523,12 @@
 .greus-cat[data-emotion="proud"] .rig-hand-right { transform: translate(-31px, 8px) rotate(-8deg); }
 .greus-cat[data-emotion="thinking"] .rig-hand-right { transform: translate(-47px, 7px); }
 
-/* Speaking swaps the resting ω lip for one opening. Fade the lip first so
-   the two mouth silhouettes never overlap during the face morph. */
+/* The ω lip stays fixed; the masked lower mouth only slides vertically. */
 .greus-cat[data-speaking="true"] .morph-mouth-opening {
   animation: talk-mouth-slide 900ms ease-in-out infinite;
 }
 .greus-cat[data-speaking="true"] .morph-mouth-line {
-  opacity: 0;
-  animation: none;
-  transition: opacity 90ms ease;
+  animation: talk-mouth-lip 900ms ease-in-out infinite;
 }
 .greus-cat[data-emotion="laughing"][data-speaking="false"] .morph-mouth-opening {
   animation: cat-laugh-mouth-open .76s ease-in-out infinite;

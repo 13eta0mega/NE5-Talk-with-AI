@@ -356,9 +356,7 @@ function stagedFacePose(
     const speakingFace = facePoseFor("happy");
     pose = {
       ...pose,
-      // The open speaking mouth replaces the resting ω lip. Keeping both paths
-      // visible creates the doubled mouth seen on narrow/mobile layouts.
-      mouthLine: MOUTH_LINE_HIDDEN,
+      mouthLine: speakingFace.mouthLine,
       mouthOuter: speakingFace.mouthOuter,
       mouthInner: speakingFace.mouthInner,
     };

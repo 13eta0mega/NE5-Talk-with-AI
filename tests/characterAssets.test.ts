@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "../src/characters/catalog";
 import { COATS, IDLE_ACTIONS, MICROPHONE_TRIGGER_THRESHOLD } from "../src/renderer/components/GreusCat";
+import { ORIGINAL_SPEECH_LEVEL } from "../src/renderer/components/PetStage";
 import { PERSONA_IDS } from "../electron/personaVault";
 
 describe("Greus Cat character replacement", () => {
@@ -22,8 +23,12 @@ describe("Greus Cat character replacement", () => {
       expect(source).toContain(id);
     }
     expect(IDLE_ACTIONS).toHaveLength(7);
-    expect(source).toMatch(/if \(isSpeaking[\s\S]*?mouthLine: MOUTH_LINE_HIDDEN/);
+    expect(source).toMatch(/if \(isSpeaking[\s\S]*?mouthLine: speakingFace\.mouthLine/);
     expect(source).toContain("microphonePeakRef");
     expect(MICROPHONE_TRIGGER_THRESHOLD).toBeLessThan(.1);
+  });
+
+  it("uses the source animator's exact tuned speech level", () => {
+    expect(ORIGINAL_SPEECH_LEVEL).toBe(.72);
   });
 });

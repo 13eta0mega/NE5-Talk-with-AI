@@ -2,11 +2,12 @@ import type { CharacterProfile } from "../../characters/catalog";
 import type { ConversationPhase, EmotionId } from "../../core/types";
 import { GreusCat, type IdleAction } from "./GreusCat";
 
+export const ORIGINAL_SPEECH_LEVEL = .72;
+
 export function PetStage({
   profile,
   emotion,
   phase,
-  mouthLevel,
   inputLevel,
   customColor,
   idleAction,
@@ -33,7 +34,7 @@ export function PetStage({
       durationMs={780}
       idleAnchor="bottom-center"
       isSpeaking={phase === "speaking"}
-      speechLevel={mouthLevel}
+      speechLevel={ORIGINAL_SPEECH_LEVEL}
       microphoneActive={phase === "listening"}
       microphoneLevel={inputLevel}
       idleAction={idleAction === "auto" ? undefined : idleAction}

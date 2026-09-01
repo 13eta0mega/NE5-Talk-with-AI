@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { LiveModelOption, SecureSettingsPublic } from "../../core/types";
-import { VOICE_CATALOG } from "../../core/gemini/catalog";
+import { DEFAULT_VOICE_NAME, VOICE_CATALOG } from "../../core/gemini/catalog";
 
 export function SettingsDrawer({
   open, onClose, voice, onVoice, modelId, onModel, liveModels, modelsLoading, onRefreshModels,
@@ -58,7 +58,7 @@ export function SettingsDrawer({
       <div className="setting-block">
         <label>목소리 · {VOICE_CATALOG.length}개 전체</label>
         <div className="voice-catalog" role="radiogroup" aria-label="Gemini 목소리">
-          {VOICE_CATALOG.map(([name, description]) => <button key={name} role="radio" aria-checked={voice === name} className={voice === name ? "active" : ""} onClick={() => onVoice(name)}><strong>{name}</strong><small>{description}</small></button>)}
+          {VOICE_CATALOG.map(([name, description]) => <button key={name} role="radio" aria-checked={voice === name} className={voice === name ? "active" : ""} onClick={() => onVoice(name)}><strong>{name}</strong><small>{description}{name === DEFAULT_VOICE_NAME ? " · 그린냥 추천" : ""}</small></button>)}
         </div>
       </div>
       <div className="setting-block">

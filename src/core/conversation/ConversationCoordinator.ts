@@ -1,5 +1,6 @@
 import { AudioEngine } from "../audio/AudioEngine";
 import { GeminiLiveAdapter } from "../gemini/GeminiLiveAdapter";
+import { DEFAULT_VOICE_NAME } from "../gemini/catalog";
 import { nextPhase } from "../session/sessionMachine";
 import type { ConversationPhase, EmotionId, ProviderEvent } from "../types";
 import { mergeStreamingTranscript } from "./transcript";
@@ -26,7 +27,7 @@ export class ConversationCoordinator {
   private listeners = new Set<(value: ConversationSnapshot) => void>();
   private expressionListener?: (emotion: EmotionId, intensity: number) => void;
   private characterId = "greus-greeny";
-  private voiceName = "Kore";
+  private voiceName = DEFAULT_VOICE_NAME;
   private modelId = "gemini-3.1-flash-live-preview";
   private generationComplete = false;
   private audioSequence = 0;

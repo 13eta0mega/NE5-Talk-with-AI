@@ -61,6 +61,7 @@ export class GeminiLiveAdapter {
       model: credentials.model,
       config: {
         responseModalities: [Modality.AUDIO],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         contextWindowCompression: { slidingWindow: {} },
@@ -109,10 +110,12 @@ export class GeminiLiveAdapter {
 
   private handleMessage(message: Record<string, any>, characterId: string, voiceName: string, modelId: string): void {
     const serverContent = message.serverContent;
-    const encodedAudio = typeof message.data === "string"
-      ? message.data
-      : serverContent?.modelTurn?.parts?.find((part: any) => part.inlineData?.data)?.inlineData?.data;
-    if (encodedAudio) {
+    const encodedAudioParts: string[] = typeof message.data === "string"
+      ? [message.data]
+      : (serverContent?.modelTurn?.parts ?? [])
+        .map((part: any) => part.inlineData?.data)
+        .filter((data: unknown): data is string => typeof data === "string");
+    for (const encodedAudio of encodedAudioParts) {
       const binary = atob(encodedAudio);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);

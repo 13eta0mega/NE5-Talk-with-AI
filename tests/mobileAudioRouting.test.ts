@@ -18,14 +18,15 @@ describe("mobile audio routing", () => {
     expect(drained.indexOf("await this.restoreListeningCapture()")).toBeLessThan(drained.indexOf("this.audio.gate.open()"));
   });
 
-  it("recreates playback after Android releases communication audio mode", async () => {
+  it("re-enters Android playback mode through an HTML media element", async () => {
     const engine = await readFile(path.resolve("src/core/audio/AudioEngine.ts"), "utf8");
     const pauseMethod = engine.slice(engine.indexOf("async pauseCaptureForPlayback"), engine.indexOf("async preparePlayback"));
 
     expect(ANDROID_AUDIO_MODE_SETTLE_MS).toBeGreaterThanOrEqual(100);
-    expect(pauseMethod.indexOf("await this.stopCapture()")).toBeLessThan(pauseMethod.indexOf("await this.closePlaybackContext()"));
-    expect(pauseMethod.indexOf('this.setAudioSessionType("playback")')).toBeLessThan(pauseMethod.indexOf("await this.preparePlayback()"));
-    expect(engine).toContain('new AudioContext({ latencyHint: "playback" })');
+    expect(pauseMethod.indexOf("await this.stopCapture()")).toBeLessThan(pauseMethod.indexOf('this.setAudioSessionType("playback")'));
+    expect(engine).toContain("new Audio()");
+    expect(engine).toContain("pcm16ToWavBlob");
+    expect(engine).not.toContain('new AudioContext({ latencyHint: "playback" })');
   });
 
   it("offers the native output picker and requests the Vercel permissions policy", async () => {

@@ -6,6 +6,7 @@ import { isConversationalLiveModel, isGemini25LiveModel, normalizeLiveModelId } 
 
 const KOREAN_LANGUAGE_CODE = "ko-KR";
 const REALTIME_INPUT_CONFIG = {
+  activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
     disabled: false,
     startOfSpeechSensitivity: "START_SENSITIVITY_LOW",

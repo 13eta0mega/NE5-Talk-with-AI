@@ -267,7 +267,7 @@ export default function App() {
       await window.deskPet?.session.update({ characterId, selectedModelId: nextModelId, resumeHandle: null });
       await coordinator.changeModel(nextModelId);
     }
-    catch (error) { setNotice(error instanceof Error ? error.message : "모델을 변경하지 못했습니다.")); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "모델을 변경하지 못했습니다."); }
   };
 
   const saveApiKey = async (value: string) => {

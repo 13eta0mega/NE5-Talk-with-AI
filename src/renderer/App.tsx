@@ -19,7 +19,7 @@ const STATUS: Record<ConversationPhase, { label: string; note: string }> = {
   disconnected: { label: "쉬는 중", note: "Live로 연결하거나 데모를 시작해 보세요" },
   connecting: { label: "연결 중", note: "대화를 준비하고 있어요" },
   idle: { label: "함께 있어요", note: "마이크를 켜거나 채팅으로 이야기해 보세요" },
-  listening: { label: "듣는 중", note: "천천히 이야기해 주세요" },
+  listening: { label: "말해도 돼", note: "지금부터 바로 말하면 돼" },
   thinking: { label: "생각 중", note: "무슨 말이 좋을지 고르는 중이에요" },
   speaking: { label: "말하는 중", note: "재생이 끝날 때까지 마이크는 잠시 쉬어요" },
   reconnecting: { label: "연결 복구 중", note: "대화의 흐름은 그대로 보존됩니다" },
@@ -74,6 +74,8 @@ export default function App() {
   const profile = characterById(characterId);
   const phase = demoPhase ?? snapshot.phase;
   const audioCapabilities = coordinator.audio.deviceCapabilities;
+  const micDiagnostics = coordinator.audio.gate.diagnostics();
+  const micReady = !demoPhase && snapshot.phase === "listening" && coordinator.audio.captureActive && micDiagnostics.open && !micDiagnostics.speaking;
 
   useEffect(() => coordinator.subscribe(setSnapshot), [coordinator]);
   const refreshModels = async () => {
@@ -239,13 +241,8 @@ export default function App() {
   };
 
   const previewIdleAction = (next: IdleAction | "auto") => {
-    if (next === "auto") {
-      setIdlePreview("auto");
-      return;
-    }
-    setEmotion("idle");
-    setEmotionIntensity(1);
-    setIdlePreview("none");
+    if (next === "auto") { setIdlePreview("auto"); return; }
+    setEmotion("idle"); setEmotionIntensity(1); setIdlePreview("none");
     window.requestAnimationFrame(() => setIdlePreview(next));
   };
 
@@ -255,9 +252,7 @@ export default function App() {
       await window.deskPet?.settings.savePreferences({ voiceName: name });
       await window.deskPet?.session.update({ characterId, selectedVoiceName: name, resumeHandle: null });
       await coordinator.changeVoice(name);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "음성을 변경하지 못했습니다.");
-    }
+    } catch (error) { setNotice(error instanceof Error ? error.message : "음성을 변경하지 못했습니다."); }
   };
 
   const changeModel = async (nextModelId: string) => {
@@ -266,100 +261,62 @@ export default function App() {
       await window.deskPet?.settings.savePreferences({ modelId: nextModelId });
       await window.deskPet?.session.update({ characterId, selectedModelId: nextModelId, resumeHandle: null });
       await coordinator.changeModel(nextModelId);
-    }
-    catch (error) { setNotice(error instanceof Error ? error.message : "모델을 변경하지 못했습니다."); }
+    } catch (error) { setNotice(error instanceof Error ? error.message : "모델을 변경하지 못했습니다."); }
   };
 
   const saveApiKey = async (value: string) => {
     if (!window.deskPet) throw new Error("Electron 앱에서 설정해 주세요.");
     try {
       await window.deskPet.settings.saveApiKey(value);
-      const next = await window.deskPet.settings.get();
-      setSecureSettings(next);
-      setNotice("API 키를 Windows 보안 저장소에 암호화해 저장했습니다.");
-      await refreshModels();
-    } catch (error) {
-      setNotice(readableError(error, "API 키를 저장하지 못했습니다."));
-      throw error;
-    }
+      const next = await window.deskPet.settings.get(); setSecureSettings(next);
+      setNotice("API 키를 Windows 보안 저장소에 암호화해 저장했습니다."); await refreshModels();
+    } catch (error) { setNotice(readableError(error, "API 키를 저장하지 못했습니다.")); throw error; }
   };
 
   const clearApiKey = async () => {
     if (!window.deskPet) return;
-    await window.deskPet.settings.clearApiKey();
-    setSecureSettings(await window.deskPet.settings.get());
-    setLiveModels([]);
-    setNotice("저장된 API 키를 삭제했습니다.");
+    await window.deskPet.settings.clearApiKey(); setSecureSettings(await window.deskPet.settings.get()); setLiveModels([]); setNotice("저장된 API 키를 삭제했습니다.");
   };
 
   const runDemo = async () => {
     const run = ++demoRun.current;
     setNotice("데모 모드: 실제 Gemini 연결 없이 상태·감정·립싱크를 시연합니다.");
-    setDemoPhase("listening");
-    setEmotion("curious");
-    for (let i = 0; i < 46 && demoRun.current === run; i += 1) {
-      setInputLevel(0.08 + Math.random() * 0.6);
-      await delay(70);
-    }
+    setDemoPhase("listening"); setEmotion("curious");
+    for (let i = 0; i < 46 && demoRun.current === run; i += 1) { setInputLevel(0.08 + Math.random() * 0.6); await delay(70); }
     if (demoRun.current !== run) return;
-    setInputLevel(0);
-    setDemoPhase("thinking");
-    setEmotion("thinking");
-    await delay(950);
+    setInputLevel(0); setDemoPhase("thinking"); setEmotion("thinking"); await delay(950);
     if (demoRun.current !== run) return;
-    setDemoPhase("speaking");
-    setEmotion("sad");
-    setEmotionIntensity(0.78);
-    for (let i = 0; i < 52 && demoRun.current === run; i += 1) {
-      const syllable = Math.sin(i * 1.8) * 0.32 + Math.random() * 0.58;
-      setMouthLevel(Math.max(0.04, syllable));
-      await delay(55);
-    }
-    setMouthLevel(0);
-    await delay(160);
-    if (demoRun.current !== run) return;
-    setDemoPhase("listening");
-    await delay(650);
-    setEmotion("happy");
-    setEmotionIntensity(1);
-    setDemoPhase(undefined);
+    setDemoPhase("speaking"); setEmotion("sad"); setEmotionIntensity(0.78);
+    for (let i = 0; i < 52 && demoRun.current === run; i += 1) { const syllable = Math.sin(i * 1.8) * 0.32 + Math.random() * 0.58; setMouthLevel(Math.max(0.04, syllable)); await delay(55); }
+    setMouthLevel(0); await delay(160); if (demoRun.current !== run) return;
+    setDemoPhase("listening"); await delay(650); setEmotion("happy"); setEmotionIntensity(1); setDemoPhase(undefined);
   };
 
   const status = STATUS[phase];
+  const visibleStatusLabel = micReady ? "마이크 입력 가능" : status.label;
+  const visibleStatusNote = micReady ? "지금 말하면 바로 입력돼" : status.note;
   const chatDisabled = ["disconnected", "connecting", "reconnecting", "error", "speaking", "thinking"].includes(snapshot.phase);
   return (
     <div className="app-shell">
       <div className="ambient-blob blob-a" /><div className="ambient-blob blob-b" />
       <header className="app-header">
         <button className="wordmark" onClick={() => setPickerOpen(true)}>DeskPet<span>.</span></button>
-        <nav aria-label="주 메뉴">
-          <button onClick={() => setPickerOpen(true)}>캐릭터</button>
-          <button onClick={() => setChatOpen(true)}>채팅</button>
-          <button onClick={() => setSettingsOpen(true)}>설정</button>
-        </nav>
+        <nav aria-label="주 메뉴"><button onClick={() => setPickerOpen(true)}>캐릭터</button><button onClick={() => setChatOpen(true)}>채팅</button><button onClick={() => setSettingsOpen(true)}>설정</button></nav>
         <button className="header-action" onClick={runDemo}>데모 보기</button>
       </header>
 
       <main className="main-panel">
         <div className="dot-pattern" aria-hidden="true" />
-        <section className="pet-info">
-          <span className="eyebrow light">YOUR DESK COMPANION</span>
-          <h1>안녕,<br /><em>{profile.displayName}</em>!</h1>
-          <p>{profile.teaser}.<br />네 이야기를 들려줘.</p>
-          <button className="change-pet" onClick={() => setPickerOpen(true)}><span>친구 바꾸기</span><b>→</b></button>
-        </section>
+        <section className="pet-info"><span className="eyebrow light">YOUR DESK COMPANION</span><h1>안녕,<br /><em>{profile.displayName}</em>!</h1><p>{profile.teaser}.<br />네 이야기를 들려줘.</p><button className="change-pet" onClick={() => setPickerOpen(true)}><span>친구 바꾸기</span><b>→</b></button></section>
 
         <section className="pet-viewport" aria-live="polite">
           <div className={`status-aura ${phase}`} style={{ "--pet-color": profile.base } as React.CSSProperties} />
           <PetStage profile={profile} emotion={emotion} intensity={emotionIntensity} phase={phase} mouthLevel={mouthLevel} inputLevel={inputLevel} customColor={customColor} idleAction={idlePreview} />
-          <div className={`status-pill ${phase}`}><i /><span>{status.label}</span></div>
+          <div className={`status-pill ${phase}`}><i /><span>{visibleStatusLabel}</span></div>
         </section>
 
         <aside className="quick-controls">
-          <div className="connection-card">
-            <div className="connection-title"><i className={snapshot.phase === "error" ? "error" : snapshot.phase === "disconnected" ? "off" : ""} /><span>{snapshot.phase === "disconnected" ? "오프라인" : snapshot.phase === "error" ? "연결 필요" : "Live 연결"}</span></div>
-            <small>{snapshot.resumed ? "이전 맥락 복원됨" : "논리 세션 준비됨"}</small>
-          </div>
+          <div className="connection-card"><div className="connection-title"><i className={snapshot.phase === "error" ? "error" : snapshot.phase === "disconnected" ? "off" : ""} /><span>{snapshot.phase === "disconnected" ? "오프라인" : snapshot.phase === "error" ? "연결 필요" : "Live 연결"}</span></div><small>{snapshot.resumed ? "이전 맥락 복원됨" : "논리 세션 준비됨"}</small></div>
           <button className="round-control" onClick={() => setChatOpen(true)} aria-label="채팅 열기"><span>⌨</span><small>채팅</small></button>
           <button className="round-control" onClick={() => setSettingsOpen(true)} aria-label="오디오 설정"><span>⌁</span><small>오디오</small></button>
           <button className="round-control" onClick={() => setPickerOpen(true)} aria-label="캐릭터 선택"><span>◌</span><small>친구</small></button>
@@ -367,43 +324,23 @@ export default function App() {
 
         <section className="conversation-bar">
           <div className="transcript-area">
-            <span className="speaker-label">{phase === "speaking" ? profile.displayName : "STATUS"}</span>
-            {transcriptEnabled && snapshot.outputTranscript ? <p className="model-transcript">{snapshot.outputTranscript}</p> : <p className="model-transcript status-copy">{status.note}</p>}
+            <span className="speaker-label">{phase === "speaking" ? profile.displayName : micReady ? "MIC READY" : "STATUS"}</span>
+            {transcriptEnabled && snapshot.outputTranscript ? <p className="model-transcript">{snapshot.outputTranscript}</p> : <p className="model-transcript status-copy">{visibleStatusNote}</p>}
             {transcriptEnabled && snapshot.inputTranscript && <small className="input-transcript">나 · {snapshot.inputTranscript}</small>}
           </div>
-          <div className="audio-wave" aria-hidden="true">
-            {Array.from({ length: 17 }, (_, index) => <i key={index} style={{ height: `${8 + ((phase === "speaking" ? mouthLevel : inputLevel) * (16 + (index % 5) * 8))}px` }} />)}
-          </div>
+          <div className="audio-wave" aria-hidden="true">{Array.from({ length: 17 }, (_, index) => <i key={index} style={{ height: `${8 + ((phase === "speaking" ? mouthLevel : inputLevel) * (16 + (index % 5) * 8))}px` }} />)}</div>
           <button className="chat-shortcut" onClick={() => setChatOpen(true)} aria-label="텍스트 채팅">⌨</button>
-          <button className={`mic-button ${phase}`} onClick={toggleMic} disabled={["connecting", "reconnecting", "speaking"].includes(phase)} aria-label={phase === "listening" ? "듣기 멈춤" : "대화 시작"}>
+          <button className={`mic-button ${phase} ${micReady ? "ready" : ""}`} onClick={toggleMic} disabled={["connecting", "reconnecting", "speaking"].includes(phase)} aria-label={micReady ? "마이크 입력 가능, 듣기 멈춤" : phase === "listening" ? "듣기 멈춤" : "대화 시작"} title={micReady ? "지금 말해도 돼" : undefined}>
             <span>{phase === "listening" ? "■" : "●"}</span>
           </button>
         </section>
 
-        <ChatPanel
-          open={chatOpen}
-          messages={chatMessages}
-          characterName={profile.displayName}
-          disabled={chatDisabled}
-          onSend={sendChat}
-          onClose={() => setChatOpen(false)}
-        />
+        <ChatPanel open={chatOpen} messages={chatMessages} characterName={profile.displayName} disabled={chatDisabled} onSend={sendChat} onClose={() => setChatOpen(false)} />
       </main>
 
-      <section className="emotion-lab">
-        <div><span className="eyebrow">EXPRESSION LAB</span><strong>{EMOTION_META[emotion].label}</strong></div>
-        <div className="emotion-scroll">
-          {EMOTION_IDS.map((id) => <button key={id} className={emotion === id ? "active" : ""} onClick={() => { setIdlePreview("auto"); setEmotion(id); setEmotionIntensity(1); }}>{EMOTION_META[id].label}</button>)}
-        </div>
-      </section>
+      <section className="emotion-lab"><div><span className="eyebrow">EXPRESSION LAB</span><strong>{EMOTION_META[emotion].label}</strong></div><div className="emotion-scroll">{EMOTION_IDS.map((id) => <button key={id} className={emotion === id ? "active" : ""} onClick={() => { setIdlePreview("auto"); setEmotion(id); setEmotionIntensity(1); }}>{EMOTION_META[id].label}</button>)}</div></section>
 
-      <section className="emotion-lab motion-lab">
-        <div><span className="eyebrow">MOTION LAB</span><strong>{idlePreview === "auto" ? "자동 동작" : idlePreview === "none" ? "준비 중" : IDLE_ACTION_LABEL[idlePreview]}</strong></div>
-        <div className="emotion-scroll">
-          <button className={idlePreview === "auto" ? "active" : ""} onClick={() => previewIdleAction("auto")}>자동</button>
-          {IDLE_ACTIONS.map((action) => <button key={action} className={idlePreview === action ? "active" : ""} onClick={() => previewIdleAction(action)}>{IDLE_ACTION_LABEL[action]}</button>)}
-        </div>
-      </section>
+      <section className="emotion-lab motion-lab"><div><span className="eyebrow">MOTION LAB</span><strong>{idlePreview === "auto" ? "자동 동작" : idlePreview === "none" ? "준비 중" : IDLE_ACTION_LABEL[idlePreview]}</strong></div><div className="emotion-scroll"><button className={idlePreview === "auto" ? "active" : ""} onClick={() => previewIdleAction("auto")}>자동</button>{IDLE_ACTIONS.map((action) => <button key={action} className={idlePreview === action ? "active" : ""} onClick={() => previewIdleAction(action)}>{IDLE_ACTION_LABEL[action]}</button>)}</div></section>
 
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
       {pickerOpen && <CharacterPicker selected={characterId} customColor={customColor} onCustomColor={(color) => { setCustomColor(color); localStorage.setItem("deskpet:custom-coat", color); void selectCharacter("greus-custom"); }} onSelect={(id) => void selectCharacter(id)} onClose={() => setPickerOpen(false)} />}

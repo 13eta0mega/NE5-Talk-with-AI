@@ -85,7 +85,9 @@ export function expressionTool() {
 }
 
 export async function createClient(): Promise<GoogleGenAI> {
-  return new GoogleGenAI({ apiKey: requireApiKey(), httpOptions: { apiVersion: "v1alpha" } });
+  // The GenAI SDK defaults to v1beta. Current Gemini Live ephemeral tokens are
+  // served by v1beta/auth_tokens, so do not pin the legacy v1alpha route here.
+  return new GoogleGenAI({ apiKey: requireApiKey() });
 }
 
 export { buildSystemInstruction };

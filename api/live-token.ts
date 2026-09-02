@@ -2,10 +2,9 @@ import {
   buildSystemInstruction, createClient, expressionTool, isCharacterId, isModelId, isTrustedBrowserRequest, isVoiceName,
   noStore, normalizeClientApiKey, parseBody, type ApiRequest, type ApiResponse,
 } from "./_shared.js";
-import { isConversationalLiveModel, normalizeLiveModelId } from "../src/core/gemini/catalog.js";
+import { isConversationalLiveModel, isGemini25LiveModel, normalizeLiveModelId } from "../src/core/gemini/catalog.js";
 
 const KOREAN_LANGUAGE_CODE = "ko-KR";
-const GEMINI_25_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
 const REALTIME_INPUT_CONFIG = {
   automaticActivityDetection: {
     disabled: false,
@@ -17,10 +16,18 @@ const REALTIME_INPUT_CONFIG = {
 };
 
 function transcriptionConfig(modelId: string): Record<string, unknown> {
-  // The 2.5 native-audio preview predates the newer language-hint fields now
-  // used by 3.1 Live. Keep transcription enabled but let 2.5 auto-detect;
-  // speechConfig + the Korean system instruction still keep replies in Korean.
-  return modelId === GEMINI_25_LIVE_MODEL ? {} : { languageCodes: [KOREAN_LANGUAGE_CODE] };
+  return isGemini25LiveModel(modelId) ? {} : { languageCodes: [KOREAN_LANGUAGE_CODE] };
+}
+
+function speechConfig(modelId: string, voiceName: string): Record<string, unknown> {
+  const config: Record<string, unknown> = {
+    voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+  };
+  // 2.5 Native Audio chooses language from the conversation. Supplying a
+  // languageCode is unnecessary and has caused compatibility issues on preview
+  // revisions, so only 3.1 receives the explicit Korean output hint.
+  if (!isGemini25LiveModel(modelId)) config.languageCode = KOREAN_LANGUAGE_CODE;
+  return config;
 }
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
@@ -56,20 +63,21 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const now = Date.now();
     const client = await createClient(clientApiKey);
     const transcription = transcriptionConfig(modelId);
-    const constrainedConfig = {
+    const constrainedConfig: Record<string, unknown> = {
       responseModalities: ["AUDIO"],
-      speechConfig: {
-        languageCode: KOREAN_LANGUAGE_CODE,
-        voiceConfig: { prebuiltVoiceConfig: { voiceName: body.voiceName } },
-      },
+      speechConfig: speechConfig(modelId, body.voiceName),
       inputAudioTranscription: transcription,
       outputAudioTranscription: transcription,
       realtimeInputConfig: REALTIME_INPUT_CONFIG,
       contextWindowCompression: { slidingWindow: {} },
       sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
       systemInstruction: { parts: [{ text: buildSystemInstruction(body.characterId, memorySummary) }] },
-      tools: [expressionTool()],
     };
+    // The 2.5 Native Audio preview has had intermittent session-closing issues
+    // around function calling. Keep conversation stability first and let the
+    // renderer keep its existing expression until a later 2.5 revision fixes it.
+    if (!isGemini25LiveModel(modelId)) constrainedConfig.tools = [expressionTool()];
+
     const token = await client.authTokens.create({ config: {
       uses: 1,
       expireTime: new Date(now + 30 * 60 * 1000).toISOString(),

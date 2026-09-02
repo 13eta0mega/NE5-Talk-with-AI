@@ -18,8 +18,9 @@ describe("mobile audio routing", () => {
     expect(drained.indexOf("await this.restoreListeningCapture()")).toBeLessThan(drained.indexOf("this.audio.gate.open()"));
   });
 
-  it("keeps Android capture out of communication mode and recreates media playback each turn", async () => {
+  it("keeps Android capture out of communication mode while preserving an unlocked reusable media element", async () => {
     const engine = await readFile(path.resolve("src/core/audio/AudioEngine.ts"), "utf8");
+    const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     const captureMethod = engine.slice(engine.indexOf("async startCapture"), engine.indexOf("async stopCapture"));
     const playbackMethod = engine.slice(engine.indexOf("async commitBufferedPlayback"), engine.indexOf("async waitForDrain"));
 
@@ -28,9 +29,11 @@ describe("mobile audio routing", () => {
     expect(captureMethod).toContain("echoCancellation: android ? false : true");
     expect(captureMethod).toContain("noiseSuppression: android ? false : true");
     expect(captureMethod).toContain("autoGainControl: android ? false : true");
-    expect(playbackMethod).toContain("this.releasePlaybackElement()");
-    expect(playbackMethod).toContain('this.setAudioSessionType("playback")');
-    expect(playbackMethod.indexOf("this.releasePlaybackElement()")).toBeLessThan(playbackMethod.indexOf("await this.preparePlayback"));
+    expect(engine).toContain("async unlockPlayback()");
+    expect(coordinator).toContain("await this.audio.unlockPlayback()");
+    expect(playbackMethod).not.toContain("this.releasePlaybackElement()");
+    expect(playbackMethod).toContain("element.muted = false");
+    expect(playbackMethod).toContain("element.volume = 1");
     expect(engine).toContain("new Audio()");
     expect(engine).toContain("pcm16ToWavBlob");
     expect(engine).not.toContain('new AudioContext({ latencyHint: "playback" })');

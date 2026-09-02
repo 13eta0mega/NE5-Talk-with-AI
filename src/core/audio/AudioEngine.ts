@@ -86,6 +86,7 @@ export class AudioEngine {
   private outputDeviceId = "default";
   private captureDeviceId?: string;
   private drainWaiters: Array<() => void> = [];
+  private playbackUnlocked = false;
 
   onInputLevel?: (level: number) => void;
   onOutputLevel?: (level: number) => void;
@@ -139,6 +140,7 @@ export class AudioEngine {
   private releasePlaybackElement(): void {
     const element = this.playbackElement;
     this.playbackElement = undefined;
+    this.playbackUnlocked = false;
     if (!element) return;
     element.onended = null;
     element.onerror = null;
@@ -168,7 +170,11 @@ export class AudioEngine {
     this.pendingPlaybackChunks = [];
     this.stopOutputMeter();
     this.clearObjectUrl();
-    this.releasePlaybackElement();
+    if (this.playbackElement) {
+      this.playbackElement.pause();
+      this.playbackElement.removeAttribute("src");
+      try { this.playbackElement.load(); } catch { /* keep reusable element alive */ }
+    }
     this.drainWaiters.splice(0).forEach((resolve) => resolve());
   }
 
@@ -193,12 +199,9 @@ export class AudioEngine {
       return;
     }
     await this.stopCapture();
-    this.flushPlayback();
+    this.flushPlayback(false);
 
     const android = this.needsAndroidAudioModeReset;
-    // Chromium Android enters MODE_IN_COMMUNICATION for processed microphone input.
-    // Keep the browser session classified as playback and request NO_EFFECTS capture
-    // so hardware volume remains associated with media across repeated turns.
     this.setAudioSessionType(android ? "playback" : "auto");
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -243,7 +246,7 @@ export class AudioEngine {
 
   async pauseCaptureForPlayback(): Promise<void> {
     await this.stopCapture();
-    this.flushPlayback();
+    this.flushPlayback(false);
     this.setAudioSessionType("playback");
     await this.waitForAndroidAudioModeReset();
   }
@@ -253,6 +256,9 @@ export class AudioEngine {
     if (!this.playbackElement) {
       const element = new Audio() as SinkMediaElement;
       element.preload = "auto";
+      element.autoplay = false;
+      element.muted = false;
+      element.volume = 1;
       element.setAttribute("playsinline", "");
       element.onended = () => this.completePlayback();
       element.onerror = () => this.completePlayback();
@@ -264,12 +270,34 @@ export class AudioEngine {
     if (this.playbackElement?.setSinkId) await this.playbackElement.setSinkId(toBrowserSinkId(deviceId));
   }
 
+  async unlockPlayback(): Promise<void> {
+    await this.preparePlayback(this.outputDeviceId);
+    if (this.playbackUnlocked || !this.playbackElement) return;
+    const element = this.playbackElement;
+    const silentUrl = URL.createObjectURL(pcm16ToWavBlob(new Int16Array(240)));
+    element.muted = false;
+    element.volume = 1;
+    element.src = silentUrl;
+    try {
+      await element.play();
+      element.pause();
+      element.currentTime = 0;
+      this.playbackUnlocked = true;
+    } catch {
+      // Some browsers do not require an explicit warm-up. Real playback gets another chance later.
+    } finally {
+      element.removeAttribute("src");
+      try { element.load(); } catch { /* keep element reusable */ }
+      URL.revokeObjectURL(silentUrl);
+    }
+  }
+
   async setOutputDevice(deviceId: string): Promise<void> {
     this.outputDeviceId = deviceId;
     if (deviceId !== "default" && !this.deviceCapabilities.speakerSelection) {
       throw new Error("이 스마트폰 브라우저는 개별 스피커 선택을 지원하지 않습니다. 휴대폰의 시스템 출력 장치를 사용해 주세요.");
     }
-    if (this.playbackElement?.setSinkId) await this.playbackElement.setSinkId(toBrowserSinkId(deviceId));
+    await this.preparePlayback(deviceId);
   }
 
   async requestOutputDevice(deviceId = this.outputDeviceId): Promise<MediaDeviceInfo> {
@@ -290,10 +318,6 @@ export class AudioEngine {
   async commitBufferedPlayback(): Promise<void> {
     if (!this.pendingPlaybackChunks.length || !this.playbackQueuedSamples) return;
 
-    // Never reuse the element that existed while microphone capture was active.
-    // A fresh HTMLMediaElement gives Android a new media-playback routing decision
-    // for every model turn instead of inheriting the previous communication route.
-    this.releasePlaybackElement();
     this.setAudioSessionType("playback");
     await this.waitForAndroidAudioModeReset();
     await this.preparePlayback(this.outputDeviceId);
@@ -304,10 +328,13 @@ export class AudioEngine {
     this.clearObjectUrl();
     this.playbackObjectUrl = URL.createObjectURL(pcm16ToWavBlob(samples));
     const element = this.playbackElement!;
+    element.muted = false;
+    element.volume = 1;
     element.src = this.playbackObjectUrl;
     element.currentTime = 0;
     try {
       await element.play();
+      this.playbackUnlocked = true;
       this.startOutputMeter();
     } catch (error) {
       this.completePlayback();
@@ -320,13 +347,18 @@ export class AudioEngine {
     await new Promise<void>((resolve) => window.setTimeout(resolve, tailGuardMs));
   }
 
-  flushPlayback(): void {
+  flushPlayback(releaseElement = false): void {
     this.pendingPlaybackChunks = [];
     this.playbackQueuedSamples = 0;
     this.playbackLevels = [];
     this.stopOutputMeter();
     this.clearObjectUrl();
-    this.releasePlaybackElement();
+    if (this.playbackElement) {
+      this.playbackElement.pause();
+      this.playbackElement.removeAttribute("src");
+      try { this.playbackElement.load(); } catch { /* keep reusable element alive */ }
+    }
+    if (releaseElement) this.releasePlaybackElement();
     this.drainWaiters.splice(0).forEach((resolve) => resolve());
   }
 
@@ -340,7 +372,7 @@ export class AudioEngine {
 
   async dispose(): Promise<void> {
     await this.stopCapture();
-    this.flushPlayback();
+    this.flushPlayback(true);
     this.setAudioSessionType("auto");
   }
 }

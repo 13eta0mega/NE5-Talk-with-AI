@@ -44,7 +44,7 @@ export interface LogicalSessionPublic {
 
 export interface SecureSettingsPublic {
   hasApiKey: boolean;
-  keySource: "environment" | "secure-storage" | "broker" | "none";
+  keySource: "environment" | "secure-storage" | "browser-storage" | "broker" | "none";
   apiKeyEditable?: boolean;
   encryptionAvailable: boolean;
   selectedVoiceName: VoiceName;

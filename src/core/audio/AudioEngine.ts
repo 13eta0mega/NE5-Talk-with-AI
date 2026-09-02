@@ -1,18 +1,10 @@
 import { AudioGate } from "./AudioGate";
 
 type DeviceSnapshot = { microphones: MediaDeviceInfo[]; speakers: MediaDeviceInfo[] };
-export type AudioDeviceCapabilities = {
-  microphoneSelection: boolean;
-  speakerSelection: boolean;
-  speakerPicker: boolean;
-  audioSession: boolean;
-};
-
+export type AudioDeviceCapabilities = { microphoneSelection: boolean; speakerSelection: boolean; speakerPicker: boolean; audioSession: boolean };
 type AudioSessionType = "auto" | "playback";
 type AudioSessionController = { type: AudioSessionType };
-type OutputMediaDevices = MediaDevices & {
-  selectAudioOutput?: (options?: { deviceId?: string }) => Promise<MediaDeviceInfo>;
-};
+type OutputMediaDevices = MediaDevices & { selectAudioOutput?: (options?: { deviceId?: string }) => Promise<MediaDeviceInfo> };
 type SinkMediaElement = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> };
 
 export const ANDROID_AUDIO_MODE_SETTLE_MS = 260;
@@ -24,10 +16,7 @@ function concatPcm(chunks: Int16Array[]): Int16Array {
   const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
   const output = new Int16Array(length);
   let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.length;
-  }
+  for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length; }
   return output;
 }
 
@@ -36,24 +25,12 @@ export function pcm16ToWavBlob(samples: Int16Array, sampleRate = PLAYBACK_SAMPLE
   const dataSize = samples.length * bytesPerSample;
   const buffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(buffer);
-  const writeAscii = (offset: number, value: string) => {
-    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
-  };
-
-  writeAscii(0, "RIFF");
-  view.setUint32(4, 36 + dataSize, true);
-  writeAscii(8, "WAVE");
-  writeAscii(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
-  view.setUint16(34, 16, true);
-  writeAscii(36, "data");
-  view.setUint32(40, dataSize, true);
-  for (let index = 0; index < samples.length; index += 1) view.setInt16(44 + index * 2, samples[index], true);
+  const writeAscii = (offset: number, value: string) => { for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i)); };
+  writeAscii(0, "RIFF"); view.setUint32(4, 36 + dataSize, true); writeAscii(8, "WAVE"); writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true); view.setUint16(32, bytesPerSample, true); view.setUint16(34, 16, true);
+  writeAscii(36, "data"); view.setUint32(40, dataSize, true);
+  for (let i = 0; i < samples.length; i += 1) view.setInt16(44 + i * 2, samples[i], true);
   return new Blob([buffer], { type: "audio/wav" });
 }
 
@@ -63,10 +40,7 @@ function outputLevels(samples: Int16Array, sampleRate = PLAYBACK_SAMPLE_RATE): n
   for (let offset = 0; offset < samples.length; offset += windowSamples) {
     const end = Math.min(samples.length, offset + windowSamples);
     let sumSquares = 0;
-    for (let index = offset; index < end; index += 1) {
-      const normalized = samples[index] / 32768;
-      sumSquares += normalized * normalized;
-    }
+    for (let i = offset; i < end; i += 1) { const normalized = samples[i] / 32768; sumSquares += normalized * normalized; }
     levels.push(Math.min(1, Math.sqrt(sumSquares / Math.max(1, end - offset)) * 3.2));
   }
   return levels;
@@ -87,76 +61,40 @@ export class AudioEngine {
   private captureDeviceId?: string;
   private drainWaiters: Array<() => void> = [];
   private playbackUnlocked = false;
+  private modelPlaybackActive = false;
 
   onInputLevel?: (level: number) => void;
   onOutputLevel?: (level: number) => void;
   onCapturePcm?: (chunk: Int16Array) => void;
+  onPlaybackStart?: () => void;
+  onPlaybackEnd?: () => void;
 
   get deviceCapabilities(): AudioDeviceCapabilities {
-    const mediaPrototype = typeof HTMLMediaElement === "undefined" ? undefined : HTMLMediaElement.prototype as HTMLMediaElement & {
-      setSinkId?: (sinkId: string) => Promise<void>;
-    };
+    const mediaPrototype = typeof HTMLMediaElement === "undefined" ? undefined : HTMLMediaElement.prototype as HTMLMediaElement & { setSinkId?: (sinkId: string) => Promise<void> };
     const mediaDevices = navigator.mediaDevices as OutputMediaDevices | undefined;
-    return {
-      microphoneSelection: Boolean(navigator.mediaDevices?.enumerateDevices),
-      speakerSelection: typeof mediaPrototype?.setSinkId === "function",
-      speakerPicker: typeof mediaDevices?.selectAudioOutput === "function" && typeof mediaPrototype?.setSinkId === "function",
-      audioSession: Boolean(this.audioSession),
-    };
+    return { microphoneSelection: Boolean(navigator.mediaDevices?.enumerateDevices), speakerSelection: typeof mediaPrototype?.setSinkId === "function", speakerPicker: typeof mediaDevices?.selectAudioOutput === "function" && typeof mediaPrototype?.setSinkId === "function", audioSession: Boolean(this.audioSession) };
   }
 
-  private get audioSession(): AudioSessionController | undefined {
-    return (navigator as Navigator & { audioSession?: AudioSessionController }).audioSession;
-  }
-
-  private setAudioSessionType(type: AudioSessionType): void {
-    try {
-      if (this.audioSession) this.audioSession.type = type;
-    } catch {
-      // Audio Session is experimental. HTMLMediaElement still advertises playback intent.
-    }
-  }
-
-  private get needsAndroidAudioModeReset(): boolean {
-    return /Android/i.test(navigator.userAgent);
-  }
-
-  private async waitForAndroidAudioModeReset(): Promise<void> {
-    if (!this.needsAndroidAudioModeReset) return;
-    await new Promise<void>((resolve) => window.setTimeout(resolve, ANDROID_AUDIO_MODE_SETTLE_MS));
-  }
-
-  private clearObjectUrl(): void {
-    if (this.playbackObjectUrl) URL.revokeObjectURL(this.playbackObjectUrl);
-    this.playbackObjectUrl = undefined;
-  }
-
-  private stopOutputMeter(): void {
-    if (this.playbackLevelFrame !== undefined) cancelAnimationFrame(this.playbackLevelFrame);
-    this.playbackLevelFrame = undefined;
-    this.onOutputLevel?.(0);
-  }
+  private get audioSession(): AudioSessionController | undefined { return (navigator as Navigator & { audioSession?: AudioSessionController }).audioSession; }
+  private setAudioSessionType(type: AudioSessionType): void { try { if (this.audioSession) this.audioSession.type = type; } catch { /* experimental */ } }
+  private get needsAndroidAudioModeReset(): boolean { return /Android/i.test(navigator.userAgent); }
+  private async waitForAndroidAudioModeReset(): Promise<void> { if (this.needsAndroidAudioModeReset) await new Promise<void>((resolve) => window.setTimeout(resolve, ANDROID_AUDIO_MODE_SETTLE_MS)); }
+  private clearObjectUrl(): void { if (this.playbackObjectUrl) URL.revokeObjectURL(this.playbackObjectUrl); this.playbackObjectUrl = undefined; }
+  private stopOutputMeter(): void { if (this.playbackLevelFrame !== undefined) cancelAnimationFrame(this.playbackLevelFrame); this.playbackLevelFrame = undefined; this.onOutputLevel?.(0); }
+  private stopModelPlaybackSignal(): void { if (!this.modelPlaybackActive) return; this.modelPlaybackActive = false; this.onPlaybackEnd?.(); }
 
   private releasePlaybackElement(): void {
-    const element = this.playbackElement;
-    this.playbackElement = undefined;
-    this.playbackUnlocked = false;
+    const element = this.playbackElement; this.playbackElement = undefined; this.playbackUnlocked = false;
     if (!element) return;
-    element.onended = null;
-    element.onerror = null;
-    element.pause();
-    element.removeAttribute("src");
-    try { element.load(); } catch { /* ignore browser cleanup errors */ }
+    element.onended = null; element.onerror = null; element.pause(); element.removeAttribute("src");
+    try { element.load(); } catch { /* ignore */ }
   }
 
   private startOutputMeter(): void {
     this.stopOutputMeter();
     const tick = () => {
       const element = this.playbackElement;
-      if (!element || element.paused || element.ended) {
-        this.onOutputLevel?.(0);
-        return;
-      }
+      if (!element || element.paused || element.ended) { this.onOutputLevel?.(0); return; }
       const index = Math.min(this.playbackLevels.length - 1, Math.max(0, Math.floor(element.currentTime * 1000 / OUTPUT_LEVEL_WINDOW_MS)));
       this.onOutputLevel?.(this.playbackLevels[index] ?? 0);
       this.playbackLevelFrame = requestAnimationFrame(tick);
@@ -165,176 +103,87 @@ export class AudioEngine {
   }
 
   private completePlayback(): void {
-    this.playbackQueuedSamples = 0;
-    this.playbackLevels = [];
-    this.pendingPlaybackChunks = [];
-    this.stopOutputMeter();
-    this.clearObjectUrl();
-    if (this.playbackElement) {
-      this.playbackElement.pause();
-      this.playbackElement.removeAttribute("src");
-      try { this.playbackElement.load(); } catch { /* keep reusable element alive */ }
-    }
+    this.stopModelPlaybackSignal();
+    this.playbackQueuedSamples = 0; this.playbackLevels = []; this.pendingPlaybackChunks = [];
+    this.stopOutputMeter(); this.clearObjectUrl();
+    if (this.playbackElement) { this.playbackElement.pause(); this.playbackElement.removeAttribute("src"); try { this.playbackElement.load(); } catch { /* keep reusable */ } }
     this.drainWaiters.splice(0).forEach((resolve) => resolve());
   }
 
   async listDevices(requestPermission = false): Promise<DeviceSnapshot> {
-    if (!navigator.mediaDevices?.enumerateDevices || !navigator.mediaDevices?.getUserMedia) {
-      throw new Error("이 브라우저에서는 마이크 장치 API를 사용할 수 없습니다. HTTPS 주소에서 열어 주세요.");
-    }
-    if (requestPermission) {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((track) => track.stop());
-    }
+    if (!navigator.mediaDevices?.enumerateDevices || !navigator.mediaDevices?.getUserMedia) throw new Error("이 브라우저에서는 마이크 장치 API를 사용할 수 없습니다. HTTPS 주소에서 열어 주세요.");
+    if (requestPermission) { const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); stream.getTracks().forEach((track) => track.stop()); }
     const devices = await navigator.mediaDevices.enumerateDevices();
-    return {
-      microphones: devices.filter((device) => device.kind === "audioinput"),
-      speakers: devices.filter((device) => device.kind === "audiooutput"),
-    };
+    return { microphones: devices.filter((device) => device.kind === "audioinput"), speakers: devices.filter((device) => device.kind === "audiooutput") };
   }
 
   async startCapture(deviceId = "default"): Promise<void> {
-    if (this.captureContext && this.captureDeviceId === deviceId) {
-      if (this.captureContext.state === "suspended") await this.captureContext.resume();
-      return;
-    }
-    await this.stopCapture();
-    this.flushPlayback(false);
-
+    if (this.captureContext && this.captureDeviceId === deviceId) { if (this.captureContext.state === "suspended") await this.captureContext.resume(); return; }
+    await this.stopCapture(); this.flushPlayback(false);
     const android = this.needsAndroidAudioModeReset;
     this.setAudioSessionType(android ? "playback" : "auto");
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: deviceId === "default" ? undefined : { exact: deviceId },
-        channelCount: 1,
-        echoCancellation: android ? false : true,
-        noiseSuppression: android ? false : true,
-        autoGainControl: android ? false : true,
-      },
-    });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: deviceId === "default" ? undefined : { exact: deviceId }, channelCount: 1, echoCancellation: android ? false : true, noiseSuppression: android ? false : true, autoGainControl: android ? false : true } });
     const context = new AudioContext({ latencyHint: "interactive" });
     await context.audioWorklet.addModule(new URL("./worklets/capture-processor.js", window.location.href).href);
     const source = context.createMediaStreamSource(stream);
-    const node = new AudioWorkletNode(context, "deskpet-capture", {
-      processorOptions: { targetSampleRate: 16000, chunkSamples: 320 },
-    });
+    const node = new AudioWorkletNode(context, "deskpet-capture", { processorOptions: { targetSampleRate: 16000, chunkSamples: 320 } });
     node.port.onmessage = (event: MessageEvent<{ type: string; level?: number; pcm?: ArrayBuffer }>) => {
       if (event.data.type === "level") this.onInputLevel?.(event.data.level ?? 0);
-      if (event.data.type === "pcm" && event.data.pcm) {
-        const chunk = new Int16Array(event.data.pcm);
-        this.gate.forward(chunk, (value) => this.onCapturePcm?.(value));
-      }
+      if (event.data.type === "pcm" && event.data.pcm) this.gate.forward(new Int16Array(event.data.pcm), (value) => this.onCapturePcm?.(value));
     };
-    source.connect(node);
-    node.connect(context.destination);
-    this.captureStream = stream;
-    this.captureContext = context;
-    this.captureNode = node;
-    this.captureDeviceId = deviceId;
+    source.connect(node); node.connect(context.destination);
+    this.captureStream = stream; this.captureContext = context; this.captureNode = node; this.captureDeviceId = deviceId;
   }
 
   async stopCapture(): Promise<void> {
-    this.captureNode?.disconnect();
-    this.captureStream?.getTracks().forEach((track) => track.stop());
+    this.captureNode?.disconnect(); this.captureStream?.getTracks().forEach((track) => track.stop());
     if (this.captureContext && this.captureContext.state !== "closed") await this.captureContext.close();
-    this.captureNode = undefined;
-    this.captureStream = undefined;
-    this.captureContext = undefined;
-    this.captureDeviceId = undefined;
-    this.onInputLevel?.(0);
+    this.captureNode = undefined; this.captureStream = undefined; this.captureContext = undefined; this.captureDeviceId = undefined; this.onInputLevel?.(0);
   }
 
-  async pauseCaptureForPlayback(): Promise<void> {
-    await this.stopCapture();
-    this.flushPlayback(false);
-    this.setAudioSessionType("playback");
-    await this.waitForAndroidAudioModeReset();
-  }
+  async pauseCaptureForPlayback(): Promise<void> { await this.stopCapture(); this.flushPlayback(false); this.setAudioSessionType("playback"); await this.waitForAndroidAudioModeReset(); }
 
   async preparePlayback(deviceId = this.outputDeviceId): Promise<void> {
     this.outputDeviceId = deviceId;
     if (!this.playbackElement) {
       const element = new Audio() as SinkMediaElement;
-      element.preload = "auto";
-      element.autoplay = false;
-      element.muted = false;
-      element.volume = 1;
-      element.setAttribute("playsinline", "");
-      element.onended = () => this.completePlayback();
-      element.onerror = () => this.completePlayback();
-      this.playbackElement = element;
+      element.preload = "auto"; element.autoplay = false; element.muted = false; element.volume = 1; element.setAttribute("playsinline", "");
+      element.onended = () => this.completePlayback(); element.onerror = () => this.completePlayback(); this.playbackElement = element;
     }
-    if (deviceId !== "default" && !this.deviceCapabilities.speakerSelection) {
-      throw new Error("이 스마트폰 브라우저는 개별 스피커 선택을 지원하지 않습니다. 휴대폰의 시스템 출력 장치를 사용해 주세요.");
-    }
+    if (deviceId !== "default" && !this.deviceCapabilities.speakerSelection) throw new Error("이 스마트폰 브라우저는 개별 스피커 선택을 지원하지 않습니다. 휴대폰의 시스템 출력 장치를 사용해 주세요.");
     if (this.playbackElement?.setSinkId) await this.playbackElement.setSinkId(toBrowserSinkId(deviceId));
   }
 
   async unlockPlayback(): Promise<void> {
     await this.preparePlayback(this.outputDeviceId);
     if (this.playbackUnlocked || !this.playbackElement) return;
-    const element = this.playbackElement;
-    const silentUrl = URL.createObjectURL(pcm16ToWavBlob(new Int16Array(240)));
-    element.muted = false;
-    element.volume = 1;
-    element.src = silentUrl;
-    try {
-      await element.play();
-      element.pause();
-      element.currentTime = 0;
-      this.playbackUnlocked = true;
-    } catch {
-      // Some browsers do not require an explicit warm-up. Real playback gets another chance later.
-    } finally {
-      element.removeAttribute("src");
-      try { element.load(); } catch { /* keep element reusable */ }
-      URL.revokeObjectURL(silentUrl);
-    }
+    const element = this.playbackElement; const silentUrl = URL.createObjectURL(pcm16ToWavBlob(new Int16Array(240)));
+    element.muted = false; element.volume = 1; element.src = silentUrl;
+    try { await element.play(); element.pause(); element.currentTime = 0; this.playbackUnlocked = true; } catch { /* real playback retries */ }
+    finally { element.removeAttribute("src"); try { element.load(); } catch { /* keep reusable */ } URL.revokeObjectURL(silentUrl); }
   }
 
-  async setOutputDevice(deviceId: string): Promise<void> {
-    this.outputDeviceId = deviceId;
-    if (deviceId !== "default" && !this.deviceCapabilities.speakerSelection) {
-      throw new Error("이 스마트폰 브라우저는 개별 스피커 선택을 지원하지 않습니다. 휴대폰의 시스템 출력 장치를 사용해 주세요.");
-    }
-    await this.preparePlayback(deviceId);
-  }
+  async setOutputDevice(deviceId: string): Promise<void> { this.outputDeviceId = deviceId; if (deviceId !== "default" && !this.deviceCapabilities.speakerSelection) throw new Error("이 스마트폰 브라우저는 개별 스피커 선택을 지원하지 않습니다. 휴대폰의 시스템 출력 장치를 사용해 주세요."); await this.preparePlayback(deviceId); }
 
   async requestOutputDevice(deviceId = this.outputDeviceId): Promise<MediaDeviceInfo> {
     const mediaDevices = navigator.mediaDevices as OutputMediaDevices | undefined;
-    if (!mediaDevices?.selectAudioOutput || !this.deviceCapabilities.speakerSelection) {
-      throw new Error("이 Chrome 버전은 웹페이지의 스피커 선택창을 지원하지 않습니다. Android의 미디어 출력 패널에서 스피커나 Bluetooth 장치를 선택해 주세요.");
-    }
-    const selected = await mediaDevices.selectAudioOutput(deviceId === "default" ? undefined : { deviceId });
-    await this.setOutputDevice(selected.deviceId);
-    return selected;
+    if (!mediaDevices?.selectAudioOutput || !this.deviceCapabilities.speakerSelection) throw new Error("이 Chrome 버전은 웹페이지의 스피커 선택창을 지원하지 않습니다. Android의 미디어 출력 패널에서 스피커나 Bluetooth 장치를 선택해 주세요.");
+    const selected = await mediaDevices.selectAudioOutput(deviceId === "default" ? undefined : { deviceId }); await this.setOutputDevice(selected.deviceId); return selected;
   }
 
-  async enqueuePcm24k(pcm: Int16Array): Promise<void> {
-    this.pendingPlaybackChunks.push(new Int16Array(pcm));
-    this.playbackQueuedSamples += pcm.length;
-  }
+  async enqueuePcm24k(pcm: Int16Array): Promise<void> { this.pendingPlaybackChunks.push(new Int16Array(pcm)); this.playbackQueuedSamples += pcm.length; }
 
   async commitBufferedPlayback(): Promise<void> {
     if (!this.pendingPlaybackChunks.length || !this.playbackQueuedSamples) return;
-
-    this.setAudioSessionType("playback");
-    await this.waitForAndroidAudioModeReset();
-    await this.preparePlayback(this.outputDeviceId);
-
-    const samples = concatPcm(this.pendingPlaybackChunks);
-    this.pendingPlaybackChunks = [];
-    this.playbackLevels = outputLevels(samples);
-    this.clearObjectUrl();
-    this.playbackObjectUrl = URL.createObjectURL(pcm16ToWavBlob(samples));
-    const element = this.playbackElement!;
-    element.muted = false;
-    element.volume = 1;
-    element.src = this.playbackObjectUrl;
-    element.currentTime = 0;
+    this.setAudioSessionType("playback"); await this.waitForAndroidAudioModeReset(); await this.preparePlayback(this.outputDeviceId);
+    const samples = concatPcm(this.pendingPlaybackChunks); this.pendingPlaybackChunks = []; this.playbackLevels = outputLevels(samples);
+    this.clearObjectUrl(); this.playbackObjectUrl = URL.createObjectURL(pcm16ToWavBlob(samples));
+    const element = this.playbackElement!; element.muted = false; element.volume = 1; element.src = this.playbackObjectUrl; element.currentTime = 0;
     try {
       await element.play();
       this.playbackUnlocked = true;
+      this.modelPlaybackActive = true;
+      this.onPlaybackStart?.();
       this.startOutputMeter();
     } catch (error) {
       this.completePlayback();
@@ -342,37 +191,17 @@ export class AudioEngine {
     }
   }
 
-  async waitForDrain(tailGuardMs = 160): Promise<void> {
-    if (this.playbackQueuedSamples > 0) await new Promise<void>((resolve) => this.drainWaiters.push(resolve));
-    await new Promise<void>((resolve) => window.setTimeout(resolve, tailGuardMs));
-  }
+  async waitForDrain(tailGuardMs = 160): Promise<void> { if (this.playbackQueuedSamples > 0) await new Promise<void>((resolve) => this.drainWaiters.push(resolve)); await new Promise<void>((resolve) => window.setTimeout(resolve, tailGuardMs)); }
 
   flushPlayback(releaseElement = false): void {
-    this.pendingPlaybackChunks = [];
-    this.playbackQueuedSamples = 0;
-    this.playbackLevels = [];
-    this.stopOutputMeter();
-    this.clearObjectUrl();
-    if (this.playbackElement) {
-      this.playbackElement.pause();
-      this.playbackElement.removeAttribute("src");
-      try { this.playbackElement.load(); } catch { /* keep reusable element alive */ }
-    }
+    this.stopModelPlaybackSignal();
+    this.pendingPlaybackChunks = []; this.playbackQueuedSamples = 0; this.playbackLevels = []; this.stopOutputMeter(); this.clearObjectUrl();
+    if (this.playbackElement) { this.playbackElement.pause(); this.playbackElement.removeAttribute("src"); try { this.playbackElement.load(); } catch { /* keep reusable */ } }
     if (releaseElement) this.releasePlaybackElement();
     this.drainWaiters.splice(0).forEach((resolve) => resolve());
   }
 
-  get queueEmpty(): boolean {
-    return this.playbackQueuedSamples === 0;
-  }
-
-  get captureActive(): boolean {
-    return Boolean(this.captureContext && this.captureStream?.active);
-  }
-
-  async dispose(): Promise<void> {
-    await this.stopCapture();
-    this.flushPlayback(true);
-    this.setAudioSessionType("auto");
-  }
+  get queueEmpty(): boolean { return this.playbackQueuedSamples === 0; }
+  get captureActive(): boolean { return Boolean(this.captureContext && this.captureStream?.active); }
+  async dispose(): Promise<void> { await this.stopCapture(); this.flushPlayback(true); this.setAudioSessionType("auto"); }
 }

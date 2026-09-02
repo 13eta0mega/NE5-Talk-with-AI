@@ -103,6 +103,7 @@ export class ConversationCoordinator {
     this.update({ error: undefined });
     try {
       await this.audio.preparePlayback();
+      await this.audio.unlockPlayback();
       await this.provider.connect(characterId, voiceName, modelId);
     } catch (error) {
       this.transition("FAIL");

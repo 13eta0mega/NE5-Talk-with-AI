@@ -7,6 +7,7 @@ import { mergeStreamingTranscript } from "./transcript";
 
 const MAX_AUTO_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_STABILITY_MS = 5000;
+const THINKING_RESPONSE_TIMEOUT_MS = 10000;
 
 export interface ConversationSnapshot {
   phase: ConversationPhase;
@@ -38,6 +39,7 @@ export class ConversationCoordinator {
   private outputTranscriptOpen = false;
   private reconnectTimer?: number;
   private reconnectStabilityTimer?: number;
+  private thinkingResponseTimer?: number;
   private autoReconnectAttempts = 0;
   private capturePauseForPlayback?: Promise<void>;
 
@@ -45,6 +47,7 @@ export class ConversationCoordinator {
     this.provider.onEvent((event) => void this.handleProviderEvent(event));
     this.audio.onCapturePcm = (chunk) => this.provider.sendPcm16(chunk);
     this.audio.onPlaybackStart = () => {
+      this.clearThinkingResponseTimer();
       this.audio.gate.setSpeaking(true);
       if (this.snapshot.phase !== "speaking") this.transition("MODEL_AUDIO_START");
     };
@@ -68,6 +71,32 @@ export class ConversationCoordinator {
     this.reconnectStabilityTimer = undefined;
   }
 
+  private clearThinkingResponseTimer(): void {
+    if (this.thinkingResponseTimer !== undefined) window.clearTimeout(this.thinkingResponseTimer);
+    this.thinkingResponseTimer = undefined;
+  }
+
+  private armThinkingResponseTimer(): void {
+    this.clearThinkingResponseTimer();
+    this.thinkingResponseTimer = window.setTimeout(() => {
+      this.thinkingResponseTimer = undefined;
+      if (this.disposed || this.snapshot.phase !== "thinking") return;
+      this.generationComplete = false;
+      this.audio.flushPlayback();
+      this.audio.gate.setSpeaking(false);
+      if (this.desiredListening) {
+        void this.restoreListeningCapture().then(() => {
+          if (this.disposed || this.snapshot.phase !== "thinking") return;
+          this.audio.gate.open();
+          this.update({ phase: "listening", error: "Gemini 응답이 지연되어 다시 듣기 상태로 복구했습니다." });
+        });
+      } else {
+        this.capturePauseForPlayback = undefined;
+        this.update({ phase: "idle", error: "Gemini 응답이 지연되어 대기 상태로 복구했습니다." });
+      }
+    }, THINKING_RESPONSE_TIMEOUT_MS);
+  }
+
   private markConnectionStable(): void {
     this.clearReconnectStabilityTimer();
     this.reconnectStabilityTimer = window.setTimeout(() => {
@@ -84,6 +113,7 @@ export class ConversationCoordinator {
   private failRecovery(message = "Gemini Live 연결을 복구하지 못했습니다. API 키를 확인한 뒤 다시 연결해 주세요."): void {
     this.clearReconnectTimer();
     this.clearReconnectStabilityTimer();
+    this.clearThinkingResponseTimer();
     this.reconnecting = false;
     this.transition("FAIL");
     this.update({ error: message });
@@ -101,7 +131,7 @@ export class ConversationCoordinator {
 
   async connect(characterId: string, voiceName: string, modelId: string): Promise<void> {
     this.disposed = false; this.characterId = characterId; this.voiceName = voiceName; this.modelId = modelId;
-    this.clearReconnectTimer(); this.clearReconnectStabilityTimer(); this.autoReconnectAttempts = 0; this.reconnecting = false;
+    this.clearReconnectTimer(); this.clearReconnectStabilityTimer(); this.clearThinkingResponseTimer(); this.autoReconnectAttempts = 0; this.reconnecting = false;
     this.transition(this.snapshot.phase === "error" ? "RETRY" : "CONNECT"); this.update({ error: undefined });
     try { await this.audio.preparePlayback(); await this.audio.unlockPlayback(); await this.provider.connect(characterId, voiceName, modelId); }
     catch (error) { this.transition("FAIL"); this.update({ error: error instanceof Error ? error.message : "연결할 수 없습니다." }); throw error; }
@@ -113,11 +143,15 @@ export class ConversationCoordinator {
       await this.reconnect("network");
       if (!this.provider.isReady) throw new Error("Live 연결을 복구하지 못했습니다. 다시 연결해 주세요.");
     }
+    this.clearThinkingResponseTimer();
     this.desiredListening = true; this.microphoneDeviceId = deviceId; this.capturePauseForPlayback = undefined;
     await this.audio.startCapture(deviceId); this.audio.gate.setSpeaking(false); this.audio.gate.open(); this.transition("START_LISTENING");
   }
 
-  stopListening(): void { this.desiredListening = false; this.audio.gate.close(); this.provider.endInputAudio(); void this.audio.stopCapture(); this.transition("USER_SPEECH_END"); }
+  stopListening(): void {
+    this.desiredListening = false; this.audio.gate.close(); this.provider.endInputAudio(); void this.audio.stopCapture(); this.transition("USER_SPEECH_END");
+    this.armThinkingResponseTimer();
+  }
 
   async sendText(text: string): Promise<void> {
     const value = text.trim(); if (!value) return;
@@ -130,7 +164,7 @@ export class ConversationCoordinator {
     this.audioSequence += 1; this.generationComplete = false; this.audio.gate.close(); this.audio.gate.setSpeaking(false); this.audio.flushPlayback();
     if (this.desiredListening) { this.provider.endInputAudio(); await this.audio.stopCapture(); }
     this.capturePauseForPlayback = undefined; this.inputTranscriptOpen = true; this.outputTranscriptOpen = false;
-    this.update({ phase: "thinking", inputTranscript: value, outputTranscript: "", error: undefined }); this.provider.sendText(value);
+    this.update({ phase: "thinking", inputTranscript: value, outputTranscript: "", error: undefined }); this.provider.sendText(value); this.armThinkingResponseTimer();
   }
 
   async changeVoice(voiceName: string): Promise<void> { if (this.voiceName === voiceName) return; this.voiceName = voiceName; if (this.snapshot.phase !== "disconnected") await this.reconnect("voice-change"); }
@@ -138,13 +172,14 @@ export class ConversationCoordinator {
 
   async switchCharacter(characterId: string, voiceName: string, modelId: string): Promise<void> {
     this.characterId = characterId; this.voiceName = voiceName; this.modelId = modelId; this.audio.gate.close(); this.audio.flushPlayback(); this.desiredListening = false;
-    this.clearReconnectTimer(); this.clearReconnectStabilityTimer(); this.autoReconnectAttempts = 0; this.reconnecting = false;
+    this.clearReconnectTimer(); this.clearReconnectStabilityTimer(); this.clearThinkingResponseTimer(); this.autoReconnectAttempts = 0; this.reconnecting = false;
     this.lastEmotion = "idle"; this.lastEmotionIntensity = 1; await this.audio.stopCapture(); this.capturePauseForPlayback = undefined; await this.provider.close();
     this.update({ phase: "disconnected", inputTranscript: "", outputTranscript: "", resumed: false, error: undefined });
   }
 
   private async reconnect(reason: "voice-change" | "model-change" | "go-away" | "network"): Promise<void> {
     if (this.reconnecting || this.disposed) return;
+    this.clearThinkingResponseTimer();
     const automatic = reason === "network" || reason === "go-away";
     if (automatic && this.autoReconnectAttempts >= MAX_AUTO_RECONNECT_ATTEMPTS) {
       this.failRecovery();
@@ -181,9 +216,24 @@ export class ConversationCoordinator {
   private async commitPlaybackAndFinish(sequence: number): Promise<void> {
     try { await this.audio.commitBufferedPlayback(); void this.finishSpeakingWhenDrained(sequence); }
     catch (error) {
-      this.audio.flushPlayback(); this.audio.gate.setSpeaking(false); this.update({ error: error instanceof Error ? error.message : "오디오 재생에 실패했습니다." });
+      this.clearThinkingResponseTimer(); this.audio.flushPlayback(); this.audio.gate.setSpeaking(false); this.update({ error: error instanceof Error ? error.message : "오디오 재생에 실패했습니다." });
       if (this.desiredListening) { await this.restoreListeningCapture(); this.audio.gate.open(); this.update({ phase: "listening" }); }
       else { this.capturePauseForPlayback = undefined; this.update({ phase: "idle" }); }
+    }
+  }
+
+  private async settleWaitingForInput(): Promise<void> {
+    this.clearThinkingResponseTimer();
+    this.generationComplete = false;
+    this.audio.flushPlayback();
+    this.audio.gate.setSpeaking(false);
+    if (this.desiredListening) {
+      await this.restoreListeningCapture();
+      this.audio.gate.open();
+      this.update({ phase: "listening", error: undefined });
+    } else {
+      this.capturePauseForPlayback = undefined;
+      this.update({ phase: "idle", error: undefined });
     }
   }
 
@@ -195,34 +245,36 @@ export class ConversationCoordinator {
         if (this.desiredListening) { await this.restoreListeningCapture(); this.audio.gate.setSpeaking(false); this.audio.gate.open(); }
         this.expressionListener?.(this.lastEmotion, this.lastEmotionIntensity); break;
       case "audio":
-        this.markProviderActivity(); this.audioSequence += 1; this.generationComplete = false;
+        this.clearThinkingResponseTimer(); this.markProviderActivity(); this.audioSequence += 1; this.generationComplete = false;
         await this.enterPlaybackMode(); await this.audio.enqueuePcm24k(event.pcm); break;
       case "generation-complete":
       case "turn-complete":
-        this.markProviderActivity(); this.generationComplete = true; if (event.type === "turn-complete") this.inputTranscriptOpen = false; await this.commitPlaybackAndFinish(this.audioSequence); break;
+        this.clearThinkingResponseTimer(); this.markProviderActivity(); this.generationComplete = true; if (event.type === "turn-complete") this.inputTranscriptOpen = false; await this.commitPlaybackAndFinish(this.audioSequence); break;
+      case "waiting-for-input":
+        this.markProviderActivity(); await this.settleWaitingForInput(); break;
       case "interrupted":
-        this.markProviderActivity(); this.audioSequence += 1; this.generationComplete = false; this.audio.flushPlayback(); this.audio.gate.setSpeaking(false);
-        if (this.desiredListening) { await this.restoreListeningCapture(); this.audio.gate.open(); this.update({ phase: "listening" }); } else this.capturePauseForPlayback = undefined;
+        this.clearThinkingResponseTimer(); this.markProviderActivity(); this.audioSequence += 1; this.generationComplete = false; this.audio.flushPlayback(); this.audio.gate.setSpeaking(false);
+        if (this.desiredListening) { await this.restoreListeningCapture(); this.audio.gate.open(); this.update({ phase: "listening" }); } else { this.capturePauseForPlayback = undefined; this.update({ phase: "idle" }); }
         break;
       case "input-transcript": {
         this.markProviderActivity(); const previous = this.inputTranscriptOpen ? this.snapshot.inputTranscript : ""; if (!this.inputTranscriptOpen) this.outputTranscriptOpen = false; this.inputTranscriptOpen = true;
         this.update({ inputTranscript: mergeStreamingTranscript(previous, event.text) }); break;
       }
       case "output-transcript": {
-        this.markProviderActivity(); const previous = this.outputTranscriptOpen ? this.snapshot.outputTranscript : ""; this.outputTranscriptOpen = true;
+        this.clearThinkingResponseTimer(); this.markProviderActivity(); const previous = this.outputTranscriptOpen ? this.snapshot.outputTranscript : ""; this.outputTranscriptOpen = true;
         this.update({ outputTranscript: mergeStreamingTranscript(previous, event.text) }); break;
       }
       case "expression": this.markProviderActivity(); this.lastEmotion = event.emotion; this.lastEmotionIntensity = event.intensity; this.expressionListener?.(event.emotion, event.intensity); break;
       case "go-away":
-        this.clearReconnectStabilityTimer();
+        this.clearThinkingResponseTimer(); this.clearReconnectStabilityTimer();
         if (!this.reconnecting && this.snapshot.phase !== "disconnected" && this.snapshot.phase !== "error") this.transition("RECONNECT");
         this.scheduleReconnect("go-away", Math.min(250, Math.max(20, event.timeLeftMs - 500))); break;
       case "closed":
-        this.clearReconnectStabilityTimer();
+        this.clearThinkingResponseTimer(); this.clearReconnectStabilityTimer();
         if (!this.reconnecting && this.snapshot.phase !== "disconnected" && this.snapshot.phase !== "error") this.transition("RECONNECT");
         this.scheduleReconnect("network"); break;
       case "error":
-        this.clearReconnectStabilityTimer(); this.update({ error: event.message });
+        this.clearThinkingResponseTimer(); this.clearReconnectStabilityTimer(); this.update({ error: event.message });
         if (!["connecting", "disconnected", "error"].includes(this.snapshot.phase)) {
           if (!this.reconnecting && this.snapshot.phase !== "reconnecting") this.transition("RECONNECT");
           this.scheduleReconnect("network", 450);
@@ -235,11 +287,12 @@ export class ConversationCoordinator {
   private async finishSpeakingWhenDrained(sequence: number): Promise<void> {
     await this.audio.waitForDrain(160);
     if (!this.generationComplete || sequence !== this.audioSequence) return;
+    this.clearThinkingResponseTimer();
     this.audio.gate.setSpeaking(false);
     if (this.desiredListening) { await this.restoreListeningCapture(); this.audio.gate.open(); this.transition("PLAYBACK_DRAINED"); }
     else { this.capturePauseForPlayback = undefined; this.update({ phase: "idle" }); }
   }
 
   diagnostics() { return { ...this.audio.gate.diagnostics(), phase: this.snapshot.phase, reconnectCount: this.snapshot.reconnectCount, providerReady: this.provider.isReady, autoReconnectAttempts: this.autoReconnectAttempts }; }
-  async dispose(): Promise<void> { this.disposed = true; this.desiredListening = false; this.clearReconnectTimer(); this.clearReconnectStabilityTimer(); this.audio.gate.close(); await this.provider.close(); await this.audio.dispose(); this.capturePauseForPlayback = undefined; }
+  async dispose(): Promise<void> { this.disposed = true; this.desiredListening = false; this.clearReconnectTimer(); this.clearReconnectStabilityTimer(); this.clearThinkingResponseTimer(); this.audio.gate.close(); await this.provider.close(); await this.audio.dispose(); this.capturePauseForPlayback = undefined; }
 }

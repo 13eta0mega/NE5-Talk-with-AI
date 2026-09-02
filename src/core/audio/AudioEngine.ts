@@ -161,7 +161,8 @@ export class AudioEngine {
   }
 
   async startCapture(deviceId = "default"): Promise<void> {
-    if (this.captureContext && this.captureDeviceId === deviceId) {
+    if (this.captureContext && this.captureDeviceId === deviceId && this.captureActive) {
+      this.setAudioSessionType(this.needsAndroidAudioModeReset ? "playback" : "auto");
       if (this.captureContext.state === "suspended") await this.captureContext.resume();
       return;
     }
@@ -212,7 +213,9 @@ export class AudioEngine {
   }
 
   async pauseCaptureForPlayback(): Promise<void> {
-    await this.stopCapture();
+    // Keep the microphone stream/context alive between turns. AudioGate is already
+    // closed before playback, so captured PCM is dropped locally while the model speaks.
+    // Releasing getUserMedia here made Android Chrome fail to reacquire the mic on turn 2.
     this.flushPlayback(false);
     this.setAudioSessionType("playback");
     await this.waitForAndroidAudioModeReset();
@@ -305,7 +308,13 @@ export class AudioEngine {
   }
 
   get captureActive(): boolean {
-    return Boolean(this.captureContext && this.captureStream?.active);
+    const tracks = this.captureStream?.getAudioTracks() ?? [];
+    return Boolean(
+      this.captureContext
+      && this.captureContext.state !== "closed"
+      && this.captureStream?.active
+      && tracks.some((track) => track.readyState === "live"),
+    );
   }
 
   async dispose(): Promise<void> {

@@ -64,7 +64,7 @@ export interface LiveModelOption {
 
 export type ProviderEvent =
   | { type: "connected"; resumed: boolean }
-  | { type: "closed"; reason?: string }
+  | { type: "closed"; reason?: string; code?: number }
   | { type: "error"; message: string }
   | { type: "audio"; pcm: Int16Array }
   | { type: "input-transcript"; text: string }

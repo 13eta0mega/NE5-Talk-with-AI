@@ -7,8 +7,10 @@ class DeskpetPlaybackProcessor extends AudioWorkletProcessor {
     this.committed = false;
     this.started = false;
     this.levelAccumulator = 0;
+    this.levelPeak = 0;
     this.levelSamples = 0;
-    this.levelWindow = Math.max(1, Math.round(sampleRate * 0.05));
+    this.smoothedLevel = 0;
+    this.levelWindow = Math.max(1, Math.round(sampleRate * 0.02));
     this.sourcePosition = 0;
     this.previousSample = 0;
     this.currentSample = 0;
@@ -33,7 +35,9 @@ class DeskpetPlaybackProcessor extends AudioWorkletProcessor {
         this.sourcePosition = 0;
         this.haveCurrentSample = false;
         this.levelAccumulator = 0;
+        this.levelPeak = 0;
         this.levelSamples = 0;
+        this.smoothedLevel = 0;
         this.port.postMessage({ type: "level", level: 0 });
       }
     };
@@ -82,12 +86,25 @@ class DeskpetPlaybackProcessor extends AudioWorkletProcessor {
   }
 
   emitLevel(sample) {
+    const absolute = Math.abs(sample);
     this.levelAccumulator += sample * sample;
+    this.levelPeak = Math.max(this.levelPeak, absolute);
     this.levelSamples += 1;
     if (this.levelSamples < this.levelWindow) return;
+
     const rms = Math.sqrt(this.levelAccumulator / this.levelSamples);
-    this.port.postMessage({ type: "level", level: Math.min(1, rms * 3.2) });
+    const rmsLevel = Math.max(0, (rms - 0.004) * 11);
+    const peakLevel = Math.max(0, (this.levelPeak - 0.012) * 3.8);
+    let target = Math.min(1, Math.max(rmsLevel, peakLevel));
+    if (target < 0.025) target = 0;
+
+    const smoothing = target > this.smoothedLevel ? 0.72 : 0.38;
+    this.smoothedLevel += (target - this.smoothedLevel) * smoothing;
+    if (target === 0 && this.smoothedLevel < 0.018) this.smoothedLevel = 0;
+
+    this.port.postMessage({ type: "level", level: this.smoothedLevel });
     this.levelAccumulator = 0;
+    this.levelPeak = 0;
     this.levelSamples = 0;
   }
 
@@ -101,6 +118,7 @@ class DeskpetPlaybackProcessor extends AudioWorkletProcessor {
       const sample = this.nextSample();
       if (sample === null) {
         channel[i] = 0;
+        this.emitLevel(0);
         continue;
       }
       if (!this.started) {
@@ -115,6 +133,7 @@ class DeskpetPlaybackProcessor extends AudioWorkletProcessor {
     if (!rendered && this.committed && this.started && this.queue.length === 0 && !this.haveCurrentSample) {
       this.started = false;
       this.committed = false;
+      this.smoothedLevel = 0;
       this.port.postMessage({ type: "level", level: 0 });
       this.port.postMessage({ type: "playback-end" });
     }

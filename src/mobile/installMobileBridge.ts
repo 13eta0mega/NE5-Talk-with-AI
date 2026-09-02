@@ -4,11 +4,11 @@ import { CHARACTER_VOICE_PROFILE_VERSION, DEFAULT_LIVE_MODEL, DEFAULT_VOICE_NAME
 const SETTINGS_KEY = "deskpet:mobile-settings:v1";
 const SESSION_PREFIX = "deskpet:mobile-session:v1:";
 const VOICE_PROFILE_VERSION_KEY = "deskpet:voice-profile-version";
+const API_TIMEOUT_MS = 12000;
 
 type StoredSettings = Pick<SecureSettingsPublic,
   "selectedVoiceName" | "selectedModelId" | "selectedCharacterId" |
   "microphoneId" | "speakerId" | "transcriptEnabled">;
-
 type StoredSession = LogicalSessionPublic & {
   resumeHandle?: string;
   resumeHandleUpdatedAt?: number;
@@ -70,6 +70,8 @@ function getStoredSession(characterId: string): StoredSession {
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(path, {
@@ -77,9 +79,15 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
       headers: { "Content-Type": "application/json", ...init?.headers },
       credentials: "same-origin",
       cache: "no-store",
+      signal: controller.signal,
     });
-  } catch {
-    throw new Error("모바일 토큰 서버에 연결하지 못했습니다. HTTPS 배포 주소와 네트워크를 확인해 주세요.");
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("모바일 API 서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
+    }
+    throw new Error("모바일 API 서버에 연결하지 못했습니다. HTTPS 배포 주소와 네트워크를 확인해 주세요.");
+  } finally {
+    window.clearTimeout(timeoutId);
   }
   const payload = await response.json().catch(() => ({})) as { error?: string } & T;
   if (!response.ok) throw new Error(payload.error || `서버 요청에 실패했습니다. (${response.status})`);
@@ -93,7 +101,7 @@ export function installMobileBridge(): void {
     auth: {
       async createLiveToken(request) {
         const session = getStoredSession(request.characterId);
-        return apiRequest("./api/live-token", {
+        return apiRequest("/api/live-token", {
           method: "POST",
           body: JSON.stringify({
             ...request,
@@ -108,7 +116,7 @@ export function installMobileBridge(): void {
     settings: {
       async get() {
         const local = readStoredSettings();
-        const status = await apiRequest<{ hasApiKey: boolean }>("./api/mobile-status").catch(() => ({ hasApiKey: false }));
+        const status = await apiRequest<{ hasApiKey: boolean }>("/api/mobile-status").catch(() => ({ hasApiKey: false }));
         return {
           hasApiKey: status.hasApiKey,
           keySource: "broker",
@@ -118,7 +126,7 @@ export function installMobileBridge(): void {
         } satisfies SecureSettingsPublic;
       },
       async saveApiKey() {
-        throw new Error("모바일에서는 호스팅 서버의 GEMINI_API_KEY 환경 변수를 사용합니다.");
+        throw new Error("모바일에서는 호스팅 서버의 GEMINI_API_KEY 또는 GOOGLE_API_KEY 환경 변수를 사용합니다.");
       },
       async clearApiKey() {
         throw new Error("모바일 API 키는 호스팅 서버에서만 변경할 수 있습니다.");
@@ -130,7 +138,7 @@ export function installMobileBridge(): void {
       },
     },
     catalog: {
-      listLiveModels: () => apiRequest("./api/live-models"),
+      listLiveModels: () => apiRequest("/api/live-models"),
     },
     session: {
       async get(characterId) {

@@ -44,9 +44,17 @@ export function isTrustedBrowserRequest(request: ApiRequest): boolean {
   catch { return false; }
 }
 
+export function configuredApiKey(): string | undefined {
+  return process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim() || undefined;
+}
+
+export function hasConfiguredApiKey(): boolean {
+  return Boolean(configuredApiKey());
+}
+
 export function requireApiKey(): string {
-  const value = process.env.GEMINI_API_KEY?.trim();
-  if (!value) throw new Error("호스팅 서버에 GEMINI_API_KEY가 설정되지 않았습니다.");
+  const value = configuredApiKey();
+  if (!value) throw new Error("호스팅 서버에 GEMINI_API_KEY 또는 GOOGLE_API_KEY가 설정되지 않았습니다.");
   return value;
 }
 
@@ -81,4 +89,3 @@ export async function createClient(): Promise<GoogleGenAI> {
 }
 
 export { buildSystemInstruction };
-

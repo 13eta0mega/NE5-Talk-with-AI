@@ -10,6 +10,7 @@ const GESTURES = new Set<GestureId>([
 ]);
 
 const KOREAN_LANGUAGE_CODE = "ko-KR";
+const LIVE_CONNECT_TIMEOUT_MS = 12000;
 const REALTIME_INPUT_CONFIG = {
   automaticActivityDetection: {
     disabled: false,
@@ -53,6 +54,11 @@ function expressionTool() {
   };
 }
 
+function closeMessage(code?: number, reason?: string): string {
+  const detail = [code ? `code ${code}` : "", reason?.trim()].filter(Boolean).join(" · ");
+  return detail ? `Gemini Live 연결이 종료되었습니다. (${detail})` : "Gemini Live 연결이 종료되었습니다.";
+}
+
 export class GeminiLiveAdapter {
   private session?: {
     sendRealtimeInput(params: unknown): void;
@@ -83,6 +89,8 @@ export class GeminiLiveAdapter {
     this.ready = false;
     this.session = undefined;
     const credentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId });
+    // Current Gemini ephemeral-token documentation requires the v1beta Live API.
+    // Keep the SDK default here rather than pinning the older v1alpha route.
     const ai = new GoogleGenAI({ apiKey: credentials.token });
     const resolvedModel = normalizeLiveModelId(credentials.model);
     const transcription = transcriptionConfig(resolvedModel);
@@ -97,29 +105,53 @@ export class GeminiLiveAdapter {
     };
     if (!isGemini25LiveModel(resolvedModel)) config.tools = [expressionTool()];
 
-    const session = await ai.live.connect({
+    let setupSettled = false;
+    let rejectSetup: ((reason?: unknown) => void) | undefined;
+    const earlyFailure = new Promise<never>((_, reject) => { rejectSetup = reject; });
+    let timeoutId: number | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = window.setTimeout(() => reject(new Error("Gemini Live 연결 준비 시간이 초과되었습니다.")), LIVE_CONNECT_TIMEOUT_MS);
+    });
+
+    const connectPromise = ai.live.connect({
       model: credentials.model,
       config: config as never,
       callbacks: {
         onopen: () => {
-          // @google/genai resolves live.connect only after setupComplete.
+          // The SDK still waits for setupComplete before resolving live.connect().
         },
         onmessage: (message: unknown) => {
           if (epoch === this.connectionEpoch) this.handleMessage(message as Record<string, any>, characterId, voiceName, modelId);
         },
         onerror: (error: { message?: string }) => {
           if (epoch !== this.connectionEpoch) return;
+          const message = error.message ?? "Live 연결 오류";
           this.ready = false;
-          this.emit({ type: "error", message: error.message ?? "Live 연결 오류" });
+          if (!setupSettled) rejectSetup?.(new Error(message));
+          else this.emit({ type: "error", message });
         },
-        onclose: (event: { reason?: string }) => {
+        onclose: (event: { reason?: string; code?: number }) => {
           if (epoch !== this.connectionEpoch) return;
           this.ready = false;
           this.session = undefined;
-          this.emit({ type: "closed", reason: event.reason });
+          const message = closeMessage(event.code, event.reason);
+          if (!setupSettled) rejectSetup?.(new Error(message));
+          else this.emit({ type: "closed", reason: event.reason, code: event.code });
         },
       },
     });
+
+    let session: Awaited<typeof connectPromise>;
+    try {
+      session = await Promise.race([connectPromise, earlyFailure, timeout]);
+      setupSettled = true;
+    } catch (error) {
+      setupSettled = true;
+      void connectPromise.then((lateSession) => lateSession.close()).catch(() => undefined);
+      throw error;
+    } finally {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    }
 
     if (epoch !== this.connectionEpoch) {
       session.close();

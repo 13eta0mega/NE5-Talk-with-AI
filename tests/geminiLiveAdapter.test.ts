@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GeminiLiveAdapter } from "../src/core/gemini/GeminiLiveAdapter";
-import { CONVERSATIONAL_LIVE_MODELS, coerceConversationalLiveModel, isConversationalLiveModel } from "../src/core/gemini/catalog";
+import { CONVERSATIONAL_LIVE_MODELS, VOICE_CATALOG, coerceConversationalLiveModel, isConversationalLiveModel, isGemini25LiveModel } from "../src/core/gemini/catalog";
 import type { ProviderEvent } from "../src/core/types";
 
 describe("Gemini Live audio messages", () => {
@@ -58,6 +58,7 @@ describe("Gemini Live audio messages", () => {
       "gemini-2.5-flash-native-audio-preview-12-2025",
     ]);
     expect(isConversationalLiveModel("models/gemini-2.5-flash-native-audio-preview-12-2025")).toBe(true);
+    expect(isGemini25LiveModel("models/gemini-2.5-flash-native-audio-preview-12-2025")).toBe(true);
     expect(isConversationalLiveModel("gemini-3.5-transcribe-live")).toBe(false);
     expect(isConversationalLiveModel("gemini-3.5-live-translate-preview")).toBe(false);
     expect(isConversationalLiveModel("gemini-2.0-flash-live-001")).toBe(false);
@@ -68,19 +69,27 @@ describe("Gemini Live audio messages", () => {
     expect(listSource).toContain("if (!SUPPORTED.has(id)) continue");
   });
 
-  it("pins Korean on 3.1 and uses backward-compatible transcription config on 2.5", async () => {
+  it("uses a conservative 2.5 Native Audio config and keeps richer 3.1 features", async () => {
     const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const tokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     for (const source of [adapterSource, tokenSource]) {
       expect(source).toContain('KOREAN_LANGUAGE_CODE = "ko-KR"');
-      expect(source).toContain('GEMINI_25_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"');
+      expect(source).toContain("isGemini25LiveModel");
       expect(source).toContain("languageCodes: [KOREAN_LANGUAGE_CODE]");
-      expect(source).toContain("languageCode: KOREAN_LANGUAGE_CODE");
-      expect(source).toContain("? {}");
+      expect(source).toContain("if (!isGemini25LiveModel(modelId)) config.languageCode = KOREAN_LANGUAGE_CODE");
       expect(source).toContain('startOfSpeechSensitivity: "START_SENSITIVITY_LOW"');
       expect(source).toContain('endOfSpeechSensitivity: "END_SENSITIVITY_HIGH"');
       expect(source).toContain("silenceDurationMs: 650");
     }
+    expect(adapterSource).toContain("if (!isGemini25LiveModel(resolvedModel)) config.tools = [expressionTool()]");
+    expect(tokenSource).toContain("if (!isGemini25LiveModel(modelId)) constrainedConfig.tools = [expressionTool()]");
+  });
+
+  it("shows perceived feminine/masculine presentation in every voice option", () => {
+    expect(VOICE_CATALOG).toHaveLength(30);
+    expect(VOICE_CATALOG.every(([, description]) => description.startsWith("여성형 ·") || description.startsWith("남성형 ·"))).toBe(true);
+    expect(VOICE_CATALOG.find(([name]) => name === "Leda")?.[1]).toContain("여성형");
+    expect(VOICE_CATALOG.find(([name]) => name === "Puck")?.[1]).toContain("남성형");
   });
 
   it("does not announce ready at raw websocket open time", async () => {

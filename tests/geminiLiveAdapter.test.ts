@@ -35,7 +35,7 @@ describe("Gemini Live audio messages", () => {
     const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const serverSource = await readFile(path.resolve("api/_shared.ts"), "utf8");
     expect(adapterSource).toContain("new GoogleGenAI({ apiKey: credentials.token })");
-    expect(serverSource).toContain("new GoogleGenAI({ apiKey: requireApiKey() })");
+    expect(serverSource).toContain("new GoogleGenAI({ apiKey: requireApiKey(apiKeyOverride) })");
     expect(adapterSource).not.toContain('apiVersion: "v1alpha"');
     expect(serverSource).not.toContain('apiVersion: "v1alpha"');
   });
@@ -59,10 +59,14 @@ describe("Gemini Live audio messages", () => {
     expect(source).toContain("if (!this.isReady)");
   });
 
-  it("makes the coordinator recover a stale session before sending", async () => {
+  it("bounds automatic reconnect loops and fails visibly after repeated instability", async () => {
     const source = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
-    expect(source).toContain("if (!this.provider.isReady)");
-    expect(source).toContain('await this.reconnect("network")');
-    expect(source).toContain("providerReady: this.provider.isReady");
+    expect(source).toContain("MAX_AUTO_RECONNECT_ATTEMPTS = 3");
+    expect(source).toContain("RECONNECT_STABILITY_MS = 5000");
+    expect(source).toContain("this.autoReconnectAttempts >= MAX_AUTO_RECONNECT_ATTEMPTS");
+    expect(source).toContain("this.failRecovery()");
+    expect(source).toContain("markConnectionStable()");
+    expect(source).toContain("markProviderActivity()");
+    expect(source).toContain("autoReconnectAttempts: this.autoReconnectAttempts");
   });
 });

@@ -52,9 +52,19 @@ export function hasConfiguredApiKey(): boolean {
   return Boolean(configuredApiKey());
 }
 
-export function requireApiKey(): string {
-  const value = configuredApiKey();
-  if (!value) throw new Error("호스팅 서버에 GEMINI_API_KEY 또는 GOOGLE_API_KEY가 설정되지 않았습니다.");
+export function normalizeClientApiKey(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length < 20 || trimmed.length > 512 || /\s/.test(trimmed)) {
+    throw new Error("Gemini API 키 형식이 올바르지 않습니다.");
+  }
+  return trimmed;
+}
+
+export function requireApiKey(override?: string): string {
+  const value = override?.trim() || configuredApiKey();
+  if (!value) throw new Error("Gemini API 키가 설정되지 않았습니다. 앱 설정에서 키를 입력하거나 호스팅 서버 환경 변수를 설정해 주세요.");
   return value;
 }
 
@@ -84,10 +94,10 @@ export function expressionTool() {
   }] };
 }
 
-export async function createClient(): Promise<GoogleGenAI> {
-  // The GenAI SDK defaults to v1beta. Current Gemini Live ephemeral tokens are
-  // served by v1beta/auth_tokens, so do not pin the legacy v1alpha route here.
-  return new GoogleGenAI({ apiKey: requireApiKey() });
+export async function createClient(apiKeyOverride?: string): Promise<GoogleGenAI> {
+  // The GenAI SDK defaults to v1beta. Standard API keys stay server-side for
+  // each request; the browser receives only the short-lived Live auth token.
+  return new GoogleGenAI({ apiKey: requireApiKey(apiKeyOverride) });
 }
 
 export { buildSystemInstruction };

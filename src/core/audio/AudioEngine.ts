@@ -21,7 +21,8 @@ type PlaybackWorkletMessage =
 
 export const ANDROID_AUDIO_MODE_SETTLE_MS = 260;
 export const PLAYBACK_SAMPLE_RATE = 24000;
-export const AUDIO_WORKLET_VERSION = "20260902-2";
+export const AUDIO_WORKLET_VERSION = "20260903-1";
+export const CAPTURE_HEARTBEAT_FRESH_MS = 700;
 export const toBrowserSinkId = (deviceId: string): string => deviceId === "default" ? "" : deviceId;
 
 function versionedWorkletUrl(fileName: string): string {
@@ -43,10 +44,14 @@ export class AudioEngine {
   private captureDeviceId?: string;
   private drainWaiters: Array<() => void> = [];
   private modelPlaybackActive = false;
+  private lastCapturePcmAt = 0;
+  private lastForwardedMicAt = 0;
+  private captureStartedAt = 0;
 
   onInputLevel?: (level: number) => void;
   onOutputLevel?: (level: number) => void;
   onCapturePcm?: (chunk: Int16Array) => void;
+  onRawCapturePcm?: (chunk: Int16Array) => void;
   onPlaybackStart?: () => void;
   onPlaybackEnd?: () => void;
 
@@ -166,7 +171,10 @@ export class AudioEngine {
       if (this.captureContext.state === "suspended") await this.captureContext.resume();
       return;
     }
+    await this.createCapture(deviceId);
+  }
 
+  private async createCapture(deviceId: string): Promise<void> {
     await this.stopCapture();
     this.flushPlayback(false);
 
@@ -190,7 +198,13 @@ export class AudioEngine {
     node.port.onmessage = (event: MessageEvent<{ type: string; level?: number; pcm?: ArrayBuffer }>) => {
       if (event.data.type === "level") this.onInputLevel?.(event.data.level ?? 0);
       if (event.data.type === "pcm" && event.data.pcm) {
-        this.gate.forward(new Int16Array(event.data.pcm), (value) => this.onCapturePcm?.(value));
+        const pcm = new Int16Array(event.data.pcm);
+        this.lastCapturePcmAt = Date.now();
+        this.onRawCapturePcm?.(pcm);
+        this.gate.forward(pcm, (value) => {
+          this.lastForwardedMicAt = Date.now();
+          this.onCapturePcm?.(value);
+        });
       }
     };
     source.connect(node);
@@ -199,6 +213,13 @@ export class AudioEngine {
     this.captureContext = context;
     this.captureNode = node;
     this.captureDeviceId = deviceId;
+    this.captureStartedAt = Date.now();
+    this.lastCapturePcmAt = 0;
+    this.lastForwardedMicAt = 0;
+  }
+
+  async forceRestartCapture(deviceId = this.captureDeviceId ?? "default"): Promise<void> {
+    await this.createCapture(deviceId);
   }
 
   async stopCapture(): Promise<void> {
@@ -209,13 +230,15 @@ export class AudioEngine {
     this.captureStream = undefined;
     this.captureContext = undefined;
     this.captureDeviceId = undefined;
+    this.captureStartedAt = 0;
+    this.lastCapturePcmAt = 0;
+    this.lastForwardedMicAt = 0;
     this.onInputLevel?.(0);
   }
 
   async pauseCaptureForPlayback(): Promise<void> {
     // Keep the microphone stream/context alive between turns. AudioGate is already
     // closed before playback, so captured PCM is dropped locally while the model speaks.
-    // Releasing getUserMedia here made Android Chrome fail to reacquire the mic on turn 2.
     this.flushPlayback(false);
     this.setAudioSessionType("playback");
     await this.waitForAndroidAudioModeReset();
@@ -315,6 +338,25 @@ export class AudioEngine {
       && this.captureStream?.active
       && tracks.some((track) => track.readyState === "live"),
     );
+  }
+
+  get captureHeartbeatFresh(): boolean {
+    if (!this.captureActive) return false;
+    const now = Date.now();
+    const reference = this.lastCapturePcmAt || this.captureStartedAt;
+    return reference > 0 && now - reference <= CAPTURE_HEARTBEAT_FRESH_MS;
+  }
+
+  captureDiagnostics() {
+    return {
+      active: this.captureActive,
+      heartbeatFresh: this.captureHeartbeatFresh,
+      lastCapturePcmAt: this.lastCapturePcmAt,
+      lastForwardedMicAt: this.lastForwardedMicAt,
+      captureStartedAt: this.captureStartedAt,
+      contextState: this.captureContext?.state ?? "none",
+      trackStates: (this.captureStream?.getAudioTracks() ?? []).map((track) => track.readyState),
+    };
   }
 
   async dispose(): Promise<void> {

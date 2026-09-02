@@ -28,14 +28,20 @@ describe("real PCM lip sync", () => {
   it("maps PCM speechLevel directly to the mouth instead of a fake periodic animation", async () => {
     const css = await readFile(path.resolve("src/renderer/lipsync.css"), "utf8");
     const legacy = await readFile(path.resolve("src/renderer/components/greeny-animal.css"), "utf8");
-    expect(css).toContain("--speech-level");
-    expect(css).toContain("var(--speech-level)");
-    expect(legacy).not.toContain("mouth-talk");
+    const main = await readFile(path.resolve("src/renderer/main.tsx"), "utf8");
+
+    expect(main).toContain('import "./lipsync.css"');
+    expect(css).toContain("animation: none !important");
+    expect(css).toContain("translateY(var(--cat-mouth-open-y))");
+    expect(css).toContain("scaleY(var(--cat-mouth-lip-open))");
+    expect(css).toContain("transition: transform 32ms linear");
+    expect(legacy).toContain("talk-mouth-slide 900ms");
   });
 
   it("does not serve audio worklets cache-first from the PWA service worker", async () => {
-    const serviceWorker = await readFile(path.resolve("public/sw.js"), "utf8");
-    expect(serviceWorker).toContain("/worklets/");
-    expect(serviceWorker).toContain("fetch(event.request)");
+    const sw = await readFile(path.resolve("public/sw.js"), "utf8");
+    expect(sw).toContain('CACHE_NAME = "deskpet-shell-v2"');
+    expect(sw).toContain('url.pathname.startsWith("/worklets/")');
+    expect(sw).toContain('fetch(request, { cache: "no-store" })');
   });
 });

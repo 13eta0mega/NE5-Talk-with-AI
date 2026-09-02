@@ -4,6 +4,7 @@ import App from "./App";
 import { installMobileBridge } from "../mobile/installMobileBridge";
 import "./styles.css";
 import "./chat.css";
+import "./lipsync.css";
 
 const nativeDesktopBridge = Boolean(window.deskPet);
 installMobileBridge();

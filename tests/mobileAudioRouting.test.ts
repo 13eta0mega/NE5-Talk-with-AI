@@ -9,13 +9,20 @@ describe("mobile audio routing", () => {
     expect(toBrowserSinkId("bluetooth-device")).toBe("bluetooth-device");
   });
 
-  it("releases microphone capture before the first streaming output chunk and restores it after drain", async () => {
+  it("gates microphone transport before streaming output and reopens it after drain without tearing capture down", async () => {
     const source = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
+    const engine = await readFile(path.resolve("src/core/audio/AudioEngine.ts"), "utf8");
     const audioCase = source.slice(source.indexOf('case "audio"'), source.indexOf('case "generation-complete"'));
-    const drained = source.slice(source.indexOf("private async finishSpeakingWhenDrained"));
+    const playbackMode = source.slice(source.indexOf("private async enterPlaybackMode"), source.indexOf("private async restoreListeningCapture"));
+    const reopen = source.slice(source.indexOf("private async reopenListening"), source.indexOf("async connect", source.indexOf("private async reopenListening")));
+    const pauseCapture = engine.slice(engine.indexOf("async pauseCaptureForPlayback"), engine.indexOf("async preparePlayback"));
 
     expect(audioCase.indexOf("await this.enterPlaybackMode()")).toBeLessThan(audioCase.indexOf("await this.audio.enqueuePcm24k"));
-    expect(drained.indexOf("await this.restoreListeningCapture()")).toBeLessThan(drained.indexOf("this.audio.gate.open()"));
+    expect(playbackMode).toContain("this.audio.gate.close()");
+    expect(playbackMode).toContain("this.provider.endInputAudio()");
+    expect(reopen).toContain("await this.restoreListeningCapture()");
+    expect(reopen).toContain("this.audio.gate.open()");
+    expect(pauseCapture).not.toContain("stopCapture");
   });
 
   it("keeps Android capture out of communication mode while using direct playback AudioContext streaming", async () => {

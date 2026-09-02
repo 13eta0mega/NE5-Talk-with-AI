@@ -17,9 +17,11 @@ const REALTIME_INPUT_CONFIG = {
   activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
     disabled: false,
-    startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+    // HIGH is the more sensitive mode in Gemini Live. LOW was causing quiet/short
+    // Korean utterances to be missed, especially after several Native Audio turns.
+    startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
     endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
-    prefixPaddingMs: 250,
+    prefixPaddingMs: 120,
     silenceDurationMs: 650,
   },
 };
@@ -111,8 +113,6 @@ export class GeminiLiveAdapter {
       sessionResumption: {},
     };
     if (is25) {
-      // 2.5 Live has a known premature turn-complete regression. Keep its runtime
-      // config intentionally lean: no dynamic thinking and no compression churn.
       config.thinkingConfig = { thinkingBudget: 0 };
     } else {
       config.contextWindowCompression = { slidingWindow: {} };
@@ -131,9 +131,7 @@ export class GeminiLiveAdapter {
       model: credentials.model,
       config: config as never,
       callbacks: {
-        onopen: () => {
-          // The SDK still waits for setupComplete before resolving live.connect().
-        },
+        onopen: () => {},
         onmessage: (message: unknown) => {
           if (epoch === this.connectionEpoch) this.handleMessage(message as Record<string, any>, characterId, voiceName, modelId);
         },
@@ -259,6 +257,7 @@ export class GeminiLiveAdapter {
           const emotion = normalizeEmotionId(call.args?.emotion);
           const intensity = Math.max(0, Math.min(1, Number(call.args?.intensity ?? 0.7)));
           const gesture = GESTURES.has(call.args?.gesture) ? call.args.gesture as GestureId : undefined;
+          // Native tool output remains authoritative for newer models.
           this.emit({ type: "expression", emotion, intensity, gesture });
         }
         return { id: call.id, name: call.name, response: { result: { acknowledged: true } } };

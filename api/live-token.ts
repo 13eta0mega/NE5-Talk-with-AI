@@ -9,9 +9,9 @@ const REALTIME_INPUT_CONFIG = {
   activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
     disabled: false,
-    startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+    startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
     endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
-    prefixPaddingMs: 250,
+    prefixPaddingMs: 120,
     silenceDurationMs: 650,
   },
 };

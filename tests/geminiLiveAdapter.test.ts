@@ -73,7 +73,7 @@ describe("Gemini Live audio messages", () => {
     expect(tokenSource).toContain("client.models.list");
   });
 
-  it("uses a conservative 2.5 Native Audio config and keeps richer newer-model features", async () => {
+  it("uses a lean 2.5 Native Audio config and keeps richer newer-model features", async () => {
     const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const tokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     for (const source of [adapterSource, tokenSource]) {
@@ -83,10 +83,14 @@ describe("Gemini Live audio messages", () => {
       expect(source).toContain('startOfSpeechSensitivity: "START_SENSITIVITY_LOW"');
       expect(source).toContain('endOfSpeechSensitivity: "END_SENSITIVITY_HIGH"');
       expect(source).toContain("silenceDurationMs: 650");
+      expect(source).toContain("thinkingBudget: 0");
+      expect(source).toContain("contextWindowCompression");
     }
-    expect(adapterSource).toContain("if (!isGemini25LiveModel(resolvedModel)) config.tools = [expressionTool()]");
-    expect(tokenSource).toContain("const expressionToolAvailable = !isGemini25LiveModel(modelId)");
-    expect(tokenSource).toContain("if (expressionToolAvailable) constrainedConfig.tools = [expressionTool()]");
+    expect(adapterSource).toContain("const is25 = isGemini25LiveModel(resolvedModel)");
+    expect(adapterSource).toContain("config.tools = [expressionTool()]");
+    expect(tokenSource).toContain("const is25 = isGemini25LiveModel(modelId)");
+    expect(tokenSource).toContain("const expressionToolAvailable = !is25");
+    expect(tokenSource).toContain("constrainedConfig.tools = [expressionTool()]");
   });
 
   it("shows perceived feminine/masculine presentation in every voice option", () => {

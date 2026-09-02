@@ -25,19 +25,23 @@ describe("Gemini 2.5 Live stability profile", () => {
     expect(adapter).toContain("code?: number");
   });
 
-  it("keeps compression and session resumption enabled for long 2.5 sessions", async () => {
+  it("uses a lean 2.5 profile while keeping session resumption", async () => {
     const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const token = await readFile(path.resolve("api/live-token.ts"), "utf8");
     for (const source of [adapter, token]) {
-      expect(source).toContain("contextWindowCompression: { slidingWindow: {} }");
+      expect(source).toContain("thinkingBudget: 0");
       expect(source).toContain("sessionResumption:");
+      expect(source).toContain("contextWindowCompression");
     }
+    expect(adapter).toContain("if (is25)");
+    expect(adapter).toContain("else {");
+    expect(token).toContain("if (is25)");
   });
 
   it("uses the same expression-tool availability for token constraints and persona", async () => {
     const token = await readFile(path.resolve("api/live-token.ts"), "utf8");
-    expect(token).toContain("const expressionToolAvailable = !isGemini25LiveModel(modelId)");
+    expect(token).toContain("const expressionToolAvailable = !is25");
     expect(token).toContain("buildSystemInstruction(body.characterId, memorySummary, expressionToolAvailable)");
-    expect(token).toContain("if (expressionToolAvailable) constrainedConfig.tools = [expressionTool()]");
+    expect(token).toContain("constrainedConfig.tools = [expressionTool()]");
   });
 });

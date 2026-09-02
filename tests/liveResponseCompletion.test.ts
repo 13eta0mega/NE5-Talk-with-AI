@@ -16,12 +16,12 @@ describe("Gemini Live response completion", () => {
   it("does not flush already-buffered model speech on waitingForInput", async () => {
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     const start = coordinator.indexOf("private async settleWaitingForInput");
-    const end = coordinator.indexOf("private async handleProviderEvent", start);
+    const end = coordinator.indexOf("private async repairPrematureGemini25Turn", start);
     const waitingHandler = coordinator.slice(start, end);
 
     expect(waitingHandler).toContain("if (!this.audio.queueEmpty || this.snapshot.phase === \"speaking\")");
     expect(waitingHandler).toContain("this.generationComplete = true");
-    expect(waitingHandler).toContain("await this.commitPlaybackAndFinish(this.audioSequence)");
+    expect(waitingHandler).toContain("await this.commitPlaybackAndFinish(this.playbackEpoch)");
     expect(waitingHandler).not.toContain("flushPlayback");
   });
 

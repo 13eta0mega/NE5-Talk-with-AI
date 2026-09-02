@@ -2,6 +2,7 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { EMOTION_IDS, normalizeEmotionId, type GestureId, type ProviderEvent } from "../types";
 import { int16ToBase64 } from "../audio/pcm";
 import { inferEmotionFromText } from "../emotion";
+import { completionRepairPrompt } from "../conversation/responseCompletion";
 import { isGemini25LiveModel, normalizeLiveModelId } from "./catalog";
 
 type Subscriber = (event: ProviderEvent) => void;
@@ -97,10 +98,9 @@ export class GeminiLiveAdapter {
     this.ready = false;
     this.session = undefined;
     const credentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId });
-    // Current Gemini ephemeral-token documentation requires the v1beta Live API.
-    // Keep the SDK default here rather than pinning the older v1alpha route.
     const ai = new GoogleGenAI({ apiKey: credentials.token });
     const resolvedModel = normalizeLiveModelId(credentials.model);
+    const is25 = isGemini25LiveModel(resolvedModel);
     const transcription = transcriptionConfig(resolvedModel);
     const config: Record<string, unknown> = {
       responseModalities: [Modality.AUDIO],
@@ -108,10 +108,16 @@ export class GeminiLiveAdapter {
       inputAudioTranscription: transcription,
       outputAudioTranscription: transcription,
       realtimeInputConfig: REALTIME_INPUT_CONFIG,
-      contextWindowCompression: { slidingWindow: {} },
       sessionResumption: {},
     };
-    if (!isGemini25LiveModel(resolvedModel)) config.tools = [expressionTool()];
+    if (is25) {
+      // 2.5 Live has a known premature turn-complete regression. Keep its runtime
+      // config intentionally lean: no dynamic thinking and no compression churn.
+      config.thinkingConfig = { thinkingBudget: 0 };
+    } else {
+      config.contextWindowCompression = { slidingWindow: {} };
+      config.tools = [expressionTool()];
+    }
 
     let setupSettled = false;
     let rejectSetup: ((reason?: unknown) => void) | undefined;
@@ -183,6 +189,11 @@ export class GeminiLiveAdapter {
     this.session?.sendClientContent({ turns: text, turnComplete: true });
   }
 
+  sendContinuationRecovery(): void {
+    if (!this.isReady) return;
+    this.session?.sendClientContent({ turns: completionRepairPrompt(), turnComplete: true });
+  }
+
   endInputAudio(): void {
     if (!this.isReady) return;
     this.session?.sendRealtimeInput({ audioStreamEnd: true });
@@ -248,8 +259,6 @@ export class GeminiLiveAdapter {
           const emotion = normalizeEmotionId(call.args?.emotion);
           const intensity = Math.max(0, Math.min(1, Number(call.args?.intensity ?? 0.7)));
           const gesture = GESTURES.has(call.args?.gesture) ? call.args.gesture as GestureId : undefined;
-          // Native tool output remains authoritative when 3.1 provides it; the
-          // transcript classifier above is the shared fallback for 2.5 and missed tool calls.
           this.emit({ type: "expression", emotion, intensity, gesture });
         }
         return { id: call.id, name: call.name, response: { result: { acknowledged: true } } };

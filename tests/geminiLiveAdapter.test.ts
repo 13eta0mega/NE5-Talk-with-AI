@@ -31,6 +31,17 @@ describe("Gemini Live audio messages", () => {
     expect([...audio[1].pcm]).toEqual([3, 4]);
   });
 
+  it("emits waiting-for-input so the UI cannot stay stuck thinking", () => {
+    const adapter = new GeminiLiveAdapter();
+    const events: ProviderEvent[] = [];
+    adapter.onEvent((event) => events.push(event));
+    const handleMessage = (adapter as unknown as {
+      handleMessage(message: Record<string, unknown>, characterId: string, voiceName: string, modelId: string): void;
+    }).handleMessage.bind(adapter);
+    handleMessage({ serverContent: { waitingForInput: true } }, "greus-greeny", "Leda", "gemini-3.1-flash-live-preview");
+    expect(events.some((event) => event.type === "waiting-for-input")).toBe(true);
+  });
+
   it("uses the current SDK v1beta default for ephemeral Live tokens", async () => {
     const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const serverSource = await readFile(path.resolve("api/_shared.ts"), "utf8");
@@ -38,6 +49,19 @@ describe("Gemini Live audio messages", () => {
     expect(serverSource).toContain("new GoogleGenAI({ apiKey: requireApiKey(apiKeyOverride) })");
     expect(adapterSource).not.toContain('apiVersion: "v1alpha"');
     expect(serverSource).not.toContain('apiVersion: "v1alpha"');
+  });
+
+  it("pins speech recognition and speech output to Korean", async () => {
+    const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
+    const tokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
+    for (const source of [adapterSource, tokenSource]) {
+      expect(source).toContain('KOREAN_LANGUAGE_CODE = "ko-KR"');
+      expect(source).toContain("languageCodes: [KOREAN_LANGUAGE_CODE]");
+      expect(source).toContain("languageCode: KOREAN_LANGUAGE_CODE");
+      expect(source).toContain('startOfSpeechSensitivity: "START_SENSITIVITY_LOW"');
+      expect(source).toContain('endOfSpeechSensitivity: "END_SENSITIVITY_HIGH"');
+      expect(source).toContain("silenceDurationMs: 650");
+    }
   });
 
   it("does not announce ready at raw websocket open time", async () => {
@@ -59,14 +83,13 @@ describe("Gemini Live audio messages", () => {
     expect(source).toContain("if (!this.isReady)");
   });
 
-  it("bounds automatic reconnect loops and fails visibly after repeated instability", async () => {
+  it("bounds automatic reconnect loops and stalled thinking turns", async () => {
     const source = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     expect(source).toContain("MAX_AUTO_RECONNECT_ATTEMPTS = 3");
-    expect(source).toContain("RECONNECT_STABILITY_MS = 5000");
-    expect(source).toContain("this.autoReconnectAttempts >= MAX_AUTO_RECONNECT_ATTEMPTS");
-    expect(source).toContain("this.failRecovery()");
-    expect(source).toContain("markConnectionStable()");
-    expect(source).toContain("markProviderActivity()");
+    expect(source).toContain("THINKING_RESPONSE_TIMEOUT_MS = 10000");
+    expect(source).toContain("armThinkingResponseTimer()");
+    expect(source).toContain('case "waiting-for-input"');
+    expect(source).toContain("settleWaitingForInput()");
     expect(source).toContain("autoReconnectAttempts: this.autoReconnectAttempts");
   });
 });

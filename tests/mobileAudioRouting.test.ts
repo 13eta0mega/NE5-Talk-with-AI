@@ -9,7 +9,7 @@ describe("mobile audio routing", () => {
     expect(toBrowserSinkId("bluetooth-device")).toBe("bluetooth-device");
   });
 
-  it("releases microphone capture before playback and restores it before listening", async () => {
+  it("releases microphone capture before the first streaming output chunk and restores it after drain", async () => {
     const source = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     const audioCase = source.slice(source.indexOf('case "audio"'), source.indexOf('case "generation-complete"'));
     const drained = source.slice(source.indexOf("private async finishSpeakingWhenDrained"));
@@ -18,11 +18,11 @@ describe("mobile audio routing", () => {
     expect(drained.indexOf("await this.restoreListeningCapture()")).toBeLessThan(drained.indexOf("this.audio.gate.open()"));
   });
 
-  it("keeps Android capture out of communication mode while preserving an unlocked reusable media element", async () => {
+  it("keeps Android capture out of communication mode while using direct playback AudioContext streaming", async () => {
     const engine = await readFile(path.resolve("src/core/audio/AudioEngine.ts"), "utf8");
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     const captureMethod = engine.slice(engine.indexOf("async startCapture"), engine.indexOf("async stopCapture"));
-    const playbackMethod = engine.slice(engine.indexOf("async commitBufferedPlayback"), engine.indexOf("async waitForDrain"));
+    const enqueueMethod = engine.slice(engine.indexOf("async enqueuePcm24k"), engine.indexOf("async commitBufferedPlayback"));
 
     expect(ANDROID_AUDIO_MODE_SETTLE_MS).toBeGreaterThanOrEqual(200);
     expect(captureMethod).toContain('this.setAudioSessionType(android ? "playback" : "auto")');
@@ -31,12 +31,10 @@ describe("mobile audio routing", () => {
     expect(captureMethod).toContain("autoGainControl: android ? false : true");
     expect(engine).toContain("async unlockPlayback()");
     expect(coordinator).toContain("await this.audio.unlockPlayback()");
-    expect(playbackMethod).not.toContain("this.releasePlaybackElement()");
-    expect(playbackMethod).toContain("element.muted = false");
-    expect(playbackMethod).toContain("element.volume = 1");
-    expect(engine).toContain("new Audio()");
-    expect(engine).toContain("pcm16ToWavBlob");
-    expect(engine).not.toContain('new AudioContext({ latencyHint: "playback" })');
+    expect(engine).toContain('latencyHint: "interactive"');
+    expect(enqueueMethod).toContain('postMessage({ type: "pcm"');
+    expect(engine).not.toContain("pcm16ToWavBlob");
+    expect(engine).not.toContain("URL.createObjectURL");
   });
 
   it("offers the native output picker and requests the Vercel permissions policy", async () => {

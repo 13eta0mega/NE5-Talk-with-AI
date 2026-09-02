@@ -76,6 +76,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const memorySummary = typeof body.memorySummary === "string" ? body.memorySummary.slice(0, 1600) : undefined;
     const now = Date.now();
     const transcription = transcriptionConfig(modelId);
+    const expressionToolAvailable = !isGemini25LiveModel(modelId);
     const constrainedConfig: Record<string, unknown> = {
       responseModalities: ["AUDIO"],
       speechConfig: speechConfig(modelId, body.voiceName),
@@ -84,11 +85,11 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       realtimeInputConfig: REALTIME_INPUT_CONFIG,
       contextWindowCompression: { slidingWindow: {} },
       sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
-      systemInstruction: { parts: [{ text: buildSystemInstruction(body.characterId, memorySummary) }] },
+      systemInstruction: {
+        parts: [{ text: buildSystemInstruction(body.characterId, memorySummary, expressionToolAvailable) }],
+      },
     };
-    // Keep the unstable 2.5 preview on the conservative profile. Newer Live
-    // models discovered from models.list() automatically get the richer profile.
-    if (!isGemini25LiveModel(modelId)) constrainedConfig.tools = [expressionTool()];
+    if (expressionToolAvailable) constrainedConfig.tools = [expressionTool()];
 
     const token = await client.authTokens.create({ config: {
       uses: 1,

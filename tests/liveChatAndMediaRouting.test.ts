@@ -17,11 +17,12 @@ describe("live PCM streaming and text chat", () => {
     expect(worklet).toContain('type: "playback-end"');
   });
 
-  it("sends typed chat through Gemini Live realtime text input", async () => {
+  it("sends typed chat through ordered Gemini Live client content", async () => {
     const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     const app = await readFile(path.resolve("src/renderer/App.tsx"), "utf8");
-    expect(adapter).toContain("sendRealtimeInput({ text })");
+    expect(adapter).toContain('sendClientContent({ turns: text, turnComplete: true })');
+    expect(adapter).toContain("if (!this.isReady)");
     expect(coordinator).toContain("async sendText(text: string)");
     expect(app).toContain("<ChatPanel");
   });

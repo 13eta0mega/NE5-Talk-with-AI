@@ -21,7 +21,14 @@ type PlaybackWorkletMessage =
 
 export const ANDROID_AUDIO_MODE_SETTLE_MS = 260;
 export const PLAYBACK_SAMPLE_RATE = 24000;
+export const AUDIO_WORKLET_VERSION = "20260902-2";
 export const toBrowserSinkId = (deviceId: string): string => deviceId === "default" ? "" : deviceId;
+
+function versionedWorkletUrl(fileName: string): string {
+  const url = new URL(`./worklets/${fileName}`, window.location.href);
+  url.searchParams.set("v", AUDIO_WORKLET_VERSION);
+  return url.href;
+}
 
 export class AudioEngine {
   readonly gate = new AudioGate();
@@ -105,7 +112,7 @@ export class AudioEngine {
     }
 
     try {
-      await context.audioWorklet.addModule(new URL("./worklets/playback-processor.js", window.location.href).href);
+      await context.audioWorklet.addModule(versionedWorkletUrl("playback-processor.js"));
       const node = new AudioWorkletNode(context, "deskpet-playback", {
         processorOptions: { inputSampleRate: PLAYBACK_SAMPLE_RATE },
       });
@@ -174,7 +181,7 @@ export class AudioEngine {
       },
     });
     const context = new AudioContext({ latencyHint: "interactive" });
-    await context.audioWorklet.addModule(new URL("./worklets/capture-processor.js", window.location.href).href);
+    await context.audioWorklet.addModule(versionedWorkletUrl("capture-processor.js"));
     const source = context.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(context, "deskpet-capture", {
       processorOptions: { targetSampleRate: 16000, chunkSamples: 320 },

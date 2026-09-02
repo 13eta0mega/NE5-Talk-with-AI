@@ -2,9 +2,13 @@ import {
   createClient, isTrustedBrowserRequest, noStore, normalizeClientApiKey, parseBody,
   type ApiRequest, type ApiResponse,
 } from "./_shared.js";
-import { CONVERSATIONAL_LIVE_MODELS, normalizeLiveModelId } from "../src/core/gemini/catalog.js";
+import {
+  isConversationalLiveModel, liveModelPreferenceRank, normalizeLiveModelId,
+} from "../src/core/gemini/catalog.js";
 
-const SUPPORTED = new Set<string>(CONVERSATIONAL_LIVE_MODELS);
+function supportsBidi(actions: string[]): boolean {
+  return actions.some((action) => action.toLowerCase().includes("bidi"));
+}
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   noStore(response);
@@ -24,17 +28,19 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const models: Array<{ id: string; displayName: string; description?: string; supportedActions: string[] }> = [];
     for await (const model of pager) {
       const id = normalizeLiveModelId(model.name);
-      if (!SUPPORTED.has(id)) continue;
+      const actions = model.supportedActions ?? [];
+      if (!isConversationalLiveModel(id) || !supportsBidi(actions)) continue;
       models.push({
         id,
         displayName: model.displayName || id,
         description: model.description,
-        supportedActions: model.supportedActions ?? [],
+        supportedActions: actions,
       });
     }
-    response.status(200).json(models.sort((a, b) =>
-      CONVERSATIONAL_LIVE_MODELS.indexOf(a.id as (typeof CONVERSATIONAL_LIVE_MODELS)[number])
-      - CONVERSATIONAL_LIVE_MODELS.indexOf(b.id as (typeof CONVERSATIONAL_LIVE_MODELS)[number])));
+    response.status(200).json(models.sort((a, b) => {
+      const rank = liveModelPreferenceRank(a.id) - liveModelPreferenceRank(b.id);
+      return rank || b.id.localeCompare(a.id);
+    }));
   } catch (error) {
     response.status(500).json({ error: error instanceof Error ? error.message : "Live 모델 목록을 불러오지 못했습니다." });
   }

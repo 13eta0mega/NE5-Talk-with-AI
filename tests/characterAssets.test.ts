@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "../src/characters/catalog";
 import { COATS, IDLE_ACTIONS, MICROPHONE_TRIGGER_THRESHOLD } from "../src/renderer/components/GreusCat";
-import { ORIGINAL_SPEECH_LEVEL } from "../src/renderer/components/PetStage";
+import { MIN_AUDIBLE_SPEECH_LEVEL } from "../src/renderer/components/PetStage";
 import { PERSONA_IDS } from "../electron/personaVault";
 
 describe("Greus Cat character replacement", () => {
@@ -16,7 +16,12 @@ describe("Greus Cat character replacement", () => {
   });
 
   it("removes every legacy character asset and retains one semantic SVG rig", async () => {
-    const legacyAssets = (await readdir(path.resolve("public/characters"))).filter((name) => name.endsWith(".svg"));
+    let legacyAssets: string[] = [];
+    try {
+      legacyAssets = (await readdir(path.resolve("public/characters"))).filter((name) => name.endsWith(".svg"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     expect(legacyAssets).toEqual([]);
     const source = await readFile(path.resolve("src/renderer/components/GreusCat.tsx"), "utf8");
     for (const id of ["rig-root", "body", "face", "mouth", "tail-base", "head-pet-hitbox"]) {
@@ -32,8 +37,8 @@ describe("Greus Cat character replacement", () => {
     expect(MICROPHONE_TRIGGER_THRESHOLD).toBeLessThan(.1);
   });
 
-  it("uses the source animator's exact tuned speech level", () => {
-    expect(ORIGINAL_SPEECH_LEVEL).toBe(.72);
+  it("keeps a low audible threshold for rendered-PCM lip sync", () => {
+    expect(MIN_AUDIBLE_SPEECH_LEVEL).toBe(.012);
   });
 
   it("keeps the source mouth cycle level-aware and isolated from yawn", async () => {

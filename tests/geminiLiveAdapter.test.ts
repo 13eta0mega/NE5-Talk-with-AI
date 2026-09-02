@@ -85,7 +85,8 @@ describe("Gemini Live audio messages", () => {
       expect(source).toContain("silenceDurationMs: 650");
     }
     expect(adapterSource).toContain("if (!isGemini25LiveModel(resolvedModel)) config.tools = [expressionTool()]");
-    expect(tokenSource).toContain("if (!isGemini25LiveModel(modelId)) constrainedConfig.tools = [expressionTool()]");
+    expect(tokenSource).toContain("const expressionToolAvailable = !isGemini25LiveModel(modelId)");
+    expect(tokenSource).toContain("if (expressionToolAvailable) constrainedConfig.tools = [expressionTool()]");
   });
 
   it("shows perceived feminine/masculine presentation in every voice option", () => {

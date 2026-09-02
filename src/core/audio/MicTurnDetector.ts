@@ -1,5 +1,5 @@
 export const MIC_LOCAL_MIN_SPEECH_MS = 100;
-export const MIC_LOCAL_END_SILENCE_MS = 700;
+export const MIC_LOCAL_END_SILENCE_MS = 420;
 export const MIC_LOCAL_START_CONFIRM_MS = 60;
 
 export type MicTurnSignal = "speech-start" | "speech-end";

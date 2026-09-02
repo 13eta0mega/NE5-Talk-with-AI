@@ -132,6 +132,32 @@ export class ConversationCoordinator {
     this.transition("USER_SPEECH_END");
   }
 
+  async sendText(text: string): Promise<void> {
+    const value = text.trim();
+    if (!value) return;
+    if (this.snapshot.phase === "disconnected" || this.snapshot.phase === "error") {
+      throw new Error("먼저 Live 연결을 시작해 주세요.");
+    }
+    if (this.snapshot.phase === "connecting" || this.snapshot.phase === "reconnecting") {
+      throw new Error("Live 연결이 완료된 뒤 메시지를 보내 주세요.");
+    }
+
+    this.audioSequence += 1;
+    this.generationComplete = false;
+    this.audio.gate.close();
+    this.audio.gate.setSpeaking(false);
+    this.audio.flushPlayback();
+    if (this.desiredListening) {
+      this.provider.endInputAudio();
+      await this.audio.stopCapture();
+    }
+    this.capturePauseForPlayback = undefined;
+    this.inputTranscriptOpen = true;
+    this.outputTranscriptOpen = false;
+    this.update({ phase: "thinking", inputTranscript: value, outputTranscript: "", error: undefined });
+    this.provider.sendText(value);
+  }
+
   async changeVoice(voiceName: string): Promise<void> {
     if (this.voiceName === voiceName) return;
     this.voiceName = voiceName;
@@ -196,6 +222,25 @@ export class ConversationCoordinator {
     }, delayMs);
   }
 
+  private async commitPlaybackAndFinish(sequence: number): Promise<void> {
+    try {
+      await this.audio.commitBufferedPlayback();
+      void this.finishSpeakingWhenDrained(sequence);
+    } catch (error) {
+      this.audio.flushPlayback();
+      this.audio.gate.setSpeaking(false);
+      this.update({ error: error instanceof Error ? error.message : "오디오 재생에 실패했습니다." });
+      if (this.desiredListening) {
+        await this.restoreListeningCapture();
+        this.audio.gate.open();
+        this.update({ phase: "listening" });
+      } else {
+        this.capturePauseForPlayback = undefined;
+        this.update({ phase: "idle" });
+      }
+    }
+  }
+
   private async handleProviderEvent(event: ProviderEvent): Promise<void> {
     switch (event.type) {
       case "connected":
@@ -222,10 +267,8 @@ export class ConversationCoordinator {
       case "generation-complete":
       case "turn-complete":
         this.generationComplete = true;
-        if (event.type === "turn-complete") {
-          this.inputTranscriptOpen = false;
-        }
-        void this.finishSpeakingWhenDrained(this.audioSequence);
+        if (event.type === "turn-complete") this.inputTranscriptOpen = false;
+        await this.commitPlaybackAndFinish(this.audioSequence);
         break;
       case "interrupted":
         this.audioSequence += 1;

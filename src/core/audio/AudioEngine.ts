@@ -1,5 +1,4 @@
 import { AudioGate } from "./AudioGate";
-import { resamplePcm16 } from "./pcm";
 
 type DeviceSnapshot = { microphones: MediaDeviceInfo[]; speakers: MediaDeviceInfo[] };
 export type AudioDeviceCapabilities = {
@@ -14,19 +13,76 @@ type AudioSessionController = { type: AudioSessionType };
 type OutputMediaDevices = MediaDevices & {
   selectAudioOutput?: (options?: { deviceId?: string }) => Promise<MediaDeviceInfo>;
 };
-type SinkAudioContext = AudioContext & { setSinkId?: (sinkId: string) => Promise<void> };
+type SinkMediaElement = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> };
 
-export const ANDROID_AUDIO_MODE_SETTLE_MS = 180;
+export const ANDROID_AUDIO_MODE_SETTLE_MS = 220;
+export const PLAYBACK_SAMPLE_RATE = 24000;
+export const OUTPUT_LEVEL_WINDOW_MS = 50;
 export const toBrowserSinkId = (deviceId: string): string => deviceId === "default" ? "" : deviceId;
+
+function concatPcm(chunks: Int16Array[]): Int16Array {
+  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const output = new Int16Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
+}
+
+export function pcm16ToWavBlob(samples: Int16Array, sampleRate = PLAYBACK_SAMPLE_RATE): Blob {
+  const bytesPerSample = 2;
+  const dataSize = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeAscii = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+  };
+
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, dataSize, true);
+  for (let index = 0; index < samples.length; index += 1) view.setInt16(44 + index * 2, samples[index], true);
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function outputLevels(samples: Int16Array, sampleRate = PLAYBACK_SAMPLE_RATE): number[] {
+  const windowSamples = Math.max(1, Math.round(sampleRate * OUTPUT_LEVEL_WINDOW_MS / 1000));
+  const levels: number[] = [];
+  for (let offset = 0; offset < samples.length; offset += windowSamples) {
+    const end = Math.min(samples.length, offset + windowSamples);
+    let sumSquares = 0;
+    for (let index = offset; index < end; index += 1) {
+      const normalized = samples[index] / 32768;
+      sumSquares += normalized * normalized;
+    }
+    levels.push(Math.min(1, Math.sqrt(sumSquares / Math.max(1, end - offset)) * 3.2));
+  }
+  return levels;
+}
 
 export class AudioEngine {
   readonly gate = new AudioGate();
   private captureContext?: AudioContext;
   private captureNode?: AudioWorkletNode;
   private captureStream?: MediaStream;
-  private playbackContext?: AudioContext;
-  private playbackNode?: AudioWorkletNode;
+  private playbackElement?: SinkMediaElement;
+  private playbackObjectUrl?: string;
+  private pendingPlaybackChunks: Int16Array[] = [];
   private playbackQueuedSamples = 0;
+  private playbackLevels: number[] = [];
+  private playbackLevelFrame?: number;
   private outputDeviceId = "default";
   private captureDeviceId?: string;
   private drainWaiters: Array<() => void> = [];
@@ -36,12 +92,14 @@ export class AudioEngine {
   onCapturePcm?: (chunk: Int16Array) => void;
 
   get deviceCapabilities(): AudioDeviceCapabilities {
-    const audioContextPrototype = typeof AudioContext === "undefined" ? undefined : AudioContext.prototype as SinkAudioContext;
+    const mediaPrototype = typeof HTMLMediaElement === "undefined" ? undefined : HTMLMediaElement.prototype as HTMLMediaElement & {
+      setSinkId?: (sinkId: string) => Promise<void>;
+    };
     const mediaDevices = navigator.mediaDevices as OutputMediaDevices | undefined;
     return {
       microphoneSelection: Boolean(navigator.mediaDevices?.enumerateDevices),
-      speakerSelection: typeof audioContextPrototype?.setSinkId === "function",
-      speakerPicker: typeof mediaDevices?.selectAudioOutput === "function" && typeof audioContextPrototype?.setSinkId === "function",
+      speakerSelection: typeof mediaPrototype?.setSinkId === "function",
+      speakerPicker: typeof mediaDevices?.selectAudioOutput === "function" && typeof mediaPrototype?.setSinkId === "function",
       audioSession: Boolean(this.audioSession),
     };
   }
@@ -54,7 +112,7 @@ export class AudioEngine {
     try {
       if (this.audioSession) this.audioSession.type = type;
     } catch {
-      // Audio Session is experimental. Device routing still works without it.
+      // Audio Session is experimental. HTMLMediaElement still advertises a playback use case.
     }
   }
 
@@ -67,12 +125,39 @@ export class AudioEngine {
     await new Promise<void>((resolve) => window.setTimeout(resolve, ANDROID_AUDIO_MODE_SETTLE_MS));
   }
 
-  private async closePlaybackContext(): Promise<void> {
-    this.flushPlayback();
-    this.playbackNode?.disconnect();
-    if (this.playbackContext && this.playbackContext.state !== "closed") await this.playbackContext.close();
-    this.playbackNode = undefined;
-    this.playbackContext = undefined;
+  private clearObjectUrl(): void {
+    if (this.playbackObjectUrl) URL.revokeObjectURL(this.playbackObjectUrl);
+    this.playbackObjectUrl = undefined;
+  }
+
+  private stopOutputMeter(): void {
+    if (this.playbackLevelFrame !== undefined) cancelAnimationFrame(this.playbackLevelFrame);
+    this.playbackLevelFrame = undefined;
+    this.onOutputLevel?.(0);
+  }
+
+  private startOutputMeter(): void {
+    this.stopOutputMeter();
+    const tick = () => {
+      const element = this.playbackElement;
+      if (!element || element.paused || element.ended) {
+        this.onOutputLevel?.(0);
+        return;
+      }
+      const index = Math.min(this.playbackLevels.length - 1, Math.max(0, Math.floor(element.currentTime * 1000 / OUTPUT_LEVEL_WINDOW_MS)));
+      this.onOutputLevel?.(this.playbackLevels[index] ?? 0);
+      this.playbackLevelFrame = requestAnimationFrame(tick);
+    };
+    this.playbackLevelFrame = requestAnimationFrame(tick);
+  }
+
+  private completePlayback(): void {
+    this.playbackQueuedSamples = 0;
+    this.playbackLevels = [];
+    this.pendingPlaybackChunks = [];
+    this.stopOutputMeter();
+    this.clearObjectUrl();
+    this.drainWaiters.splice(0).forEach((resolve) => resolve());
   }
 
   async listDevices(requestPermission = false): Promise<DeviceSnapshot> {
@@ -96,10 +181,7 @@ export class AudioEngine {
       return;
     }
     await this.stopCapture();
-    // Do not keep a playback AudioContext alive while Android enters microphone/
-    // communication mode. Reusing that context on the next answer can leave
-    // volume keys attached to the call stream instead of the media stream.
-    await this.closePlaybackContext();
+    this.flushPlayback();
     this.setAudioSessionType("auto");
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -144,48 +226,42 @@ export class AudioEngine {
 
   async pauseCaptureForPlayback(): Promise<void> {
     await this.stopCapture();
-    // A playback context that survived getUserMedia may remain associated with
-    // Android's communication audio mode. Tear it down before requesting the
-    // playback session and recreate it only after the OS has released capture.
-    await this.closePlaybackContext();
+    this.flushPlayback();
     this.setAudioSessionType("playback");
     await this.waitForAndroidAudioModeReset();
     await this.preparePlayback();
   }
 
   async preparePlayback(deviceId = this.outputDeviceId): Promise<void> {
-    if (this.playbackContext) {
-      if (deviceId !== this.outputDeviceId) await this.setOutputDevice(deviceId);
-      return;
+    if (!this.playbackElement) {
+      const element = new Audio() as SinkMediaElement;
+      element.preload = "auto";
+      element.setAttribute("playsinline", "");
+      element.addEventListener("ended", () => this.completePlayback());
+      element.addEventListener("error", () => this.completePlayback());
+      this.playbackElement = element;
     }
-    // "playback" favors ordinary media rendering instead of low-latency
-    // interactive/communications output on mobile browsers.
-    const context = new AudioContext({ latencyHint: "playback" });
-    await context.audioWorklet.addModule(new URL("./worklets/playback-processor.js", window.location.href).href);
-    const node = new AudioWorkletNode(context, "deskpet-playback", { outputChannelCount: [1] });
-    node.port.onmessage = (event: MessageEvent<{ type: string; level?: number; consumed?: number }>) => {
-      if (event.data.type === "level") this.onOutputLevel?.(event.data.level ?? 0);
-      if (event.data.type === "consumed") {
-        this.playbackQueuedSamples = Math.max(0, this.playbackQueuedSamples - (event.data.consumed ?? 0));
-        if (this.playbackQueuedSamples === 0) {
-          this.onOutputLevel?.(0);
-          this.drainWaiters.splice(0).forEach((resolve) => resolve());
-        }
-      }
-    };
-    node.connect(context.destination);
-    this.playbackContext = context;
-    this.playbackNode = node;
-    await this.setOutputDevice(deviceId);
+    if (deviceId !== this.outputDeviceId) await this.setOutputDevice(deviceId);
+    else if (deviceId !== "default") await this.setOutputDevice(deviceId);
   }
 
   async setOutputDevice(deviceId: string): Promise<void> {
-    const context = this.playbackContext as SinkAudioContext | undefined;
+    await this.preparePlaybackElementOnly();
     if (deviceId !== "default" && !this.deviceCapabilities.speakerSelection) {
       throw new Error("이 스마트폰 브라우저는 개별 스피커 선택을 지원하지 않습니다. 휴대폰의 시스템 출력 장치를 사용해 주세요.");
     }
     this.outputDeviceId = deviceId;
-    if (context?.setSinkId) await context.setSinkId(toBrowserSinkId(deviceId));
+    if (this.playbackElement?.setSinkId) await this.playbackElement.setSinkId(toBrowserSinkId(deviceId));
+  }
+
+  private async preparePlaybackElementOnly(): Promise<void> {
+    if (this.playbackElement) return;
+    const element = new Audio() as SinkMediaElement;
+    element.preload = "auto";
+    element.setAttribute("playsinline", "");
+    element.addEventListener("ended", () => this.completePlayback());
+    element.addEventListener("error", () => this.completePlayback());
+    this.playbackElement = element;
   }
 
   async requestOutputDevice(deviceId = this.outputDeviceId): Promise<MediaDeviceInfo> {
@@ -199,12 +275,28 @@ export class AudioEngine {
   }
 
   async enqueuePcm24k(pcm: Int16Array): Promise<void> {
+    this.pendingPlaybackChunks.push(new Int16Array(pcm));
+    this.playbackQueuedSamples += pcm.length;
+  }
+
+  async commitBufferedPlayback(): Promise<void> {
+    if (!this.pendingPlaybackChunks.length || !this.playbackQueuedSamples) return;
     await this.preparePlayback();
-    const context = this.playbackContext!;
-    if (context.state === "suspended") await context.resume();
-    const frames = resamplePcm16(pcm, 24000, context.sampleRate);
-    this.playbackQueuedSamples += frames.length;
-    this.playbackNode!.port.postMessage({ type: "push", frames: frames.buffer }, [frames.buffer]);
+    const samples = concatPcm(this.pendingPlaybackChunks);
+    this.pendingPlaybackChunks = [];
+    this.playbackLevels = outputLevels(samples);
+    this.clearObjectUrl();
+    this.playbackObjectUrl = URL.createObjectURL(pcm16ToWavBlob(samples));
+    const element = this.playbackElement!;
+    element.src = this.playbackObjectUrl;
+    element.currentTime = 0;
+    try {
+      await element.play();
+      this.startOutputMeter();
+    } catch (error) {
+      this.completePlayback();
+      throw new Error(error instanceof Error ? `미디어 재생을 시작하지 못했습니다: ${error.message}` : "미디어 재생을 시작하지 못했습니다.");
+    }
   }
 
   async waitForDrain(tailGuardMs = 160): Promise<void> {
@@ -213,10 +305,17 @@ export class AudioEngine {
   }
 
   flushPlayback(): void {
+    this.pendingPlaybackChunks = [];
     this.playbackQueuedSamples = 0;
-    this.playbackNode?.port.postMessage({ type: "flush" });
+    this.playbackLevels = [];
+    if (this.playbackElement) {
+      this.playbackElement.pause();
+      this.playbackElement.removeAttribute("src");
+      this.playbackElement.load();
+    }
+    this.stopOutputMeter();
+    this.clearObjectUrl();
     this.drainWaiters.splice(0).forEach((resolve) => resolve());
-    this.onOutputLevel?.(0);
   }
 
   get queueEmpty(): boolean {
@@ -229,7 +328,8 @@ export class AudioEngine {
 
   async dispose(): Promise<void> {
     await this.stopCapture();
-    await this.closePlaybackContext();
+    this.flushPlayback();
+    this.playbackElement = undefined;
     this.setAudioSessionType("auto");
   }
 }

@@ -97,6 +97,11 @@ export class GeminiLiveAdapter {
     });
   }
 
+  sendText(text: string): void {
+    if (!this.ready) throw new Error("Live 연결이 아직 준비되지 않았습니다.");
+    this.session?.sendRealtimeInput({ text });
+  }
+
   endInputAudio(): void {
     this.session?.sendRealtimeInput({ audioStreamEnd: true });
   }

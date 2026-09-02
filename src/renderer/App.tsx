@@ -5,6 +5,7 @@ import { EMOTION_IDS, normalizeEmotionId, type ConversationPhase, type EmotionId
 import { DEFAULT_LIVE_MODEL, DEFAULT_VOICE_NAME } from "../core/gemini/catalog";
 import { EMOTION_META } from "../core/emotion";
 import { CharacterPicker } from "./components/CharacterPicker";
+import { ChatPanel, type ChatMessage } from "./components/ChatPanel";
 import { PetStage } from "./components/PetStage";
 import { IDLE_ACTIONS, type IdleAction } from "./components/GreusCat";
 import { SettingsDrawer } from "./components/SettingsDrawer";
@@ -17,7 +18,7 @@ const INITIAL_SNAPSHOT: ConversationSnapshot = {
 const STATUS: Record<ConversationPhase, { label: string; note: string }> = {
   disconnected: { label: "쉬는 중", note: "Live로 연결하거나 데모를 시작해 보세요" },
   connecting: { label: "연결 중", note: "대화를 준비하고 있어요" },
-  idle: { label: "함께 있어요", note: "마이크를 켜면 이야기를 들을게요" },
+  idle: { label: "함께 있어요", note: "마이크를 켜거나 채팅으로 이야기해 보세요" },
   listening: { label: "듣는 중", note: "천천히 이야기해 주세요" },
   thinking: { label: "생각 중", note: "무슨 말이 좋을지 고르는 중이에요" },
   speaking: { label: "말하는 중", note: "재생이 끝날 때까지 마이크는 잠시 쉬어요" },
@@ -55,12 +56,16 @@ export default function App() {
   const [speakerId, setSpeakerId] = useState("default");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [transcriptEnabled, setTranscriptEnabled] = useState(true);
   const [notice, setNotice] = useState<string>();
   const [demoPhase, setDemoPhase] = useState<ConversationPhase>();
   const [customColor, setCustomColor] = useState(() => localStorage.getItem("deskpet:custom-coat") ?? "#8fd6ff");
   const [idlePreview, setIdlePreview] = useState<IdleAction | "auto">("auto");
   const demoRun = useRef(0);
+  const chatMessageId = useRef(0);
+  const lastAssistantMessage = useRef("");
   const emotionRef = useRef<EmotionId>(emotion);
   const phaseRef = useRef<ConversationPhase>(INITIAL_SNAPSHOT.phase);
   const inputLevelRef = useRef(0);
@@ -93,6 +98,7 @@ export default function App() {
       if (settings.hasApiKey) void refreshModels();
     });
   }, [audioCapabilities.speakerSelection, coordinator]);
+
   useEffect(() => {
     coordinator.onExpression((nextEmotion, intensity) => {
       setEmotion(nextEmotion);
@@ -102,6 +108,13 @@ export default function App() {
     coordinator.audio.onInputLevel = setInputLevel;
     coordinator.audio.onOutputLevel = setMouthLevel;
   }, [coordinator, characterId]);
+
+  useEffect(() => {
+    const text = snapshot.outputTranscript.trim();
+    if (!text || !["idle", "listening"].includes(snapshot.phase) || text === lastAssistantMessage.current) return;
+    lastAssistantMessage.current = text;
+    setChatMessages((messages) => [...messages, { id: ++chatMessageId.current, role: "assistant", text }]);
+  }, [snapshot.outputTranscript, snapshot.phase]);
 
   useEffect(() => {
     localStorage.setItem("deskpet:selected-character", characterId);
@@ -200,11 +213,24 @@ export default function App() {
     }
   };
 
+  const sendChat = async (text: string) => {
+    setChatMessages((messages) => [...messages, { id: ++chatMessageId.current, role: "user", text }]);
+    lastAssistantMessage.current = "";
+    try {
+      await coordinator.sendText(text);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "메시지를 보내지 못했습니다.");
+      throw error;
+    }
+  };
+
   const selectCharacter = async (id: string) => {
     demoRun.current += 1;
     setDemoPhase(undefined);
     setPickerOpen(false);
     setCharacterId(id);
+    setChatMessages([]);
+    lastAssistantMessage.current = "";
     void window.deskPet?.settings.savePreferences({ characterId: id });
     setEmotion("idle");
     setEmotionIntensity(1);
@@ -241,7 +267,7 @@ export default function App() {
       await window.deskPet?.session.update({ characterId, selectedModelId: nextModelId, resumeHandle: null });
       await coordinator.changeModel(nextModelId);
     }
-    catch (error) { setNotice(error instanceof Error ? error.message : "모델을 변경하지 못했습니다."); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "모델을 변경하지 못했습니다.")); }
   };
 
   const saveApiKey = async (value: string) => {
@@ -300,6 +326,7 @@ export default function App() {
   };
 
   const status = STATUS[phase];
+  const chatDisabled = ["disconnected", "connecting", "reconnecting", "error", "speaking", "thinking"].includes(snapshot.phase);
   return (
     <div className="app-shell">
       <div className="ambient-blob blob-a" /><div className="ambient-blob blob-b" />
@@ -307,6 +334,7 @@ export default function App() {
         <button className="wordmark" onClick={() => setPickerOpen(true)}>DeskPet<span>.</span></button>
         <nav aria-label="주 메뉴">
           <button onClick={() => setPickerOpen(true)}>캐릭터</button>
+          <button onClick={() => setChatOpen(true)}>채팅</button>
           <button onClick={() => setSettingsOpen(true)}>설정</button>
         </nav>
         <button className="header-action" onClick={runDemo}>데모 보기</button>
@@ -332,6 +360,7 @@ export default function App() {
             <div className="connection-title"><i className={snapshot.phase === "error" ? "error" : snapshot.phase === "disconnected" ? "off" : ""} /><span>{snapshot.phase === "disconnected" ? "오프라인" : snapshot.phase === "error" ? "연결 필요" : "Live 연결"}</span></div>
             <small>{snapshot.resumed ? "이전 맥락 복원됨" : "논리 세션 준비됨"}</small>
           </div>
+          <button className="round-control" onClick={() => setChatOpen(true)} aria-label="채팅 열기"><span>⌨</span><small>채팅</small></button>
           <button className="round-control" onClick={() => setSettingsOpen(true)} aria-label="오디오 설정"><span>⌁</span><small>오디오</small></button>
           <button className="round-control" onClick={() => setPickerOpen(true)} aria-label="캐릭터 선택"><span>◌</span><small>친구</small></button>
         </aside>
@@ -345,10 +374,20 @@ export default function App() {
           <div className="audio-wave" aria-hidden="true">
             {Array.from({ length: 17 }, (_, index) => <i key={index} style={{ height: `${8 + ((phase === "speaking" ? mouthLevel : inputLevel) * (16 + (index % 5) * 8))}px` }} />)}
           </div>
+          <button className="chat-shortcut" onClick={() => setChatOpen(true)} aria-label="텍스트 채팅">⌨</button>
           <button className={`mic-button ${phase}`} onClick={toggleMic} disabled={["connecting", "reconnecting", "speaking"].includes(phase)} aria-label={phase === "listening" ? "듣기 멈춤" : "대화 시작"}>
             <span>{phase === "listening" ? "■" : "●"}</span>
           </button>
         </section>
+
+        <ChatPanel
+          open={chatOpen}
+          messages={chatMessages}
+          characterName={profile.displayName}
+          disabled={chatDisabled}
+          onSend={sendChat}
+          onClose={() => setChatOpen(false)}
+        />
       </main>
 
       <section className="emotion-lab">

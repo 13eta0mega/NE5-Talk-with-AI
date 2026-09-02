@@ -169,10 +169,16 @@ export function installMobileBridge(): void {
       },
       async savePreferences(patch) {
         const current = readStoredSettings();
-        const nextPatch = typeof patch.selectedModelId === "string"
-          ? { ...patch, selectedModelId: coerceConversationalLiveModel(patch.selectedModelId) }
-          : patch;
-        writeJson(SETTINGS_KEY, { ...current, ...nextPatch });
+        const next: StoredSettings = {
+          ...current,
+          selectedVoiceName: typeof patch.voiceName === "string" ? patch.voiceName : current.selectedVoiceName,
+          selectedModelId: typeof patch.modelId === "string" ? coerceConversationalLiveModel(patch.modelId) : current.selectedModelId,
+          selectedCharacterId: typeof patch.characterId === "string" ? patch.characterId : current.selectedCharacterId,
+          microphoneId: typeof patch.microphoneId === "string" ? patch.microphoneId : current.microphoneId,
+          speakerId: typeof patch.speakerId === "string" ? patch.speakerId : current.speakerId,
+          transcriptEnabled: typeof patch.transcriptEnabled === "boolean" ? patch.transcriptEnabled : current.transcriptEnabled,
+        };
+        writeJson(SETTINGS_KEY, next);
         return { ok: true };
       },
     },

@@ -1,55 +1,144 @@
-class DeskPetPlaybackProcessor extends AudioWorkletProcessor {
-  constructor() {
+class DeskpetPlaybackProcessor extends AudioWorkletProcessor {
+  constructor(options) {
     super();
+    this.inputSampleRate = options.processorOptions?.inputSampleRate || 24000;
     this.queue = [];
-    this.offset = 0;
-    this.wasActive = false;
-    this.levelCounter = 0;
-    this.levelEnergy = 0;
-    this.consumedSinceReport = 0;
+    this.queueOffset = 0;
+    this.committed = false;
+    this.started = false;
+    this.levelAccumulator = 0;
+    this.levelPeak = 0;
+    this.levelSamples = 0;
+    this.smoothedLevel = 0;
+    this.levelWindow = Math.max(1, Math.round(sampleRate * 0.02));
+    this.sourcePosition = 0;
+    this.previousSample = 0;
+    this.currentSample = 0;
+    this.haveCurrentSample = false;
+    this.sourceStep = this.inputSampleRate / sampleRate;
+
     this.port.onmessage = (event) => {
-      if (event.data.type === "push") this.queue.push(new Float32Array(event.data.frames));
-      if (event.data.type === "flush") {
+      if (event.data?.type === "pcm" && event.data.pcm) {
+        this.queue.push(new Int16Array(event.data.pcm));
+        this.committed = false;
+        return;
+      }
+      if (event.data?.type === "commit") {
+        this.committed = true;
+        return;
+      }
+      if (event.data?.type === "flush") {
         this.queue = [];
-        this.offset = 0;
-        this.wasActive = false;
-        this.port.postMessage({ type: "consumed", consumed: this.consumedSinceReport });
-        this.consumedSinceReport = 0;
+        this.queueOffset = 0;
+        this.committed = false;
+        this.started = false;
+        this.sourcePosition = 0;
+        this.haveCurrentSample = false;
+        this.levelAccumulator = 0;
+        this.levelPeak = 0;
+        this.levelSamples = 0;
+        this.smoothedLevel = 0;
+        this.port.postMessage({ type: "level", level: 0 });
       }
     };
   }
 
+  readSourceSample() {
+    while (this.queue.length) {
+      const head = this.queue[0];
+      if (this.queueOffset < head.length) {
+        return head[this.queueOffset++] / 32768;
+      }
+      this.queue.shift();
+      this.queueOffset = 0;
+    }
+    return null;
+  }
+
+  nextSample() {
+    if (!this.haveCurrentSample) {
+      const first = this.readSourceSample();
+      if (first === null) return null;
+      this.previousSample = first;
+      this.currentSample = this.readSourceSample();
+      if (this.currentSample === null) this.currentSample = this.previousSample;
+      this.haveCurrentSample = true;
+      this.sourcePosition = 0;
+    }
+
+    const value = this.previousSample + (this.currentSample - this.previousSample) * this.sourcePosition;
+    this.sourcePosition += this.sourceStep;
+    while (this.sourcePosition >= 1) {
+      this.sourcePosition -= 1;
+      this.previousSample = this.currentSample;
+      const next = this.readSourceSample();
+      if (next === null) {
+        if (this.queue.length === 0 && this.queueOffset === 0) {
+          this.haveCurrentSample = false;
+          return value;
+        }
+        this.currentSample = this.previousSample;
+      } else {
+        this.currentSample = next;
+      }
+    }
+    return value;
+  }
+
+  emitLevel(sample) {
+    const absolute = Math.abs(sample);
+    this.levelAccumulator += sample * sample;
+    this.levelPeak = Math.max(this.levelPeak, absolute);
+    this.levelSamples += 1;
+    if (this.levelSamples < this.levelWindow) return;
+
+    const rms = Math.sqrt(this.levelAccumulator / this.levelSamples);
+    const rmsLevel = Math.max(0, (rms - 0.004) * 11);
+    const peakLevel = Math.max(0, (this.levelPeak - 0.012) * 3.8);
+    let target = Math.min(1, Math.max(rmsLevel, peakLevel));
+    if (target < 0.025) target = 0;
+
+    const smoothing = target > this.smoothedLevel ? 0.72 : 0.38;
+    this.smoothedLevel += (target - this.smoothedLevel) * smoothing;
+    if (target === 0 && this.smoothedLevel < 0.018) this.smoothedLevel = 0;
+
+    this.port.postMessage({ type: "level", level: this.smoothedLevel });
+    this.levelAccumulator = 0;
+    this.levelPeak = 0;
+    this.levelSamples = 0;
+  }
+
   process(_inputs, outputs) {
-    const output = outputs[0][0];
-    let wrote = 0;
-    for (let i = 0; i < output.length; i += 1) {
-      while (this.queue.length && this.offset >= this.queue[0].length) {
-        this.queue.shift();
-        this.offset = 0;
+    const output = outputs[0];
+    const channel = output?.[0];
+    if (!channel) return true;
+
+    let rendered = false;
+    for (let i = 0; i < channel.length; i += 1) {
+      const sample = this.nextSample();
+      if (sample === null) {
+        channel[i] = 0;
+        this.emitLevel(0);
+        continue;
       }
-      const sample = this.queue.length ? this.queue[0][this.offset++] : 0;
-      output[i] = sample;
-      if (this.queue.length) {
-        wrote += 1;
-        this.levelEnergy += sample * sample;
-        this.levelCounter += 1;
+      if (!this.started) {
+        this.started = true;
+        this.port.postMessage({ type: "playback-start" });
       }
+      rendered = true;
+      channel[i] = sample;
+      this.emitLevel(sample);
     }
-    this.consumedSinceReport += wrote;
-    const active = this.queue.length > 0;
-    if (this.levelCounter >= sampleRate / 40 || (this.wasActive && !active)) {
-      const level = this.levelCounter ? Math.min(1, Math.sqrt(this.levelEnergy / this.levelCounter) * 3.8) : 0;
-      this.port.postMessage({ type: "level", level });
-      this.levelCounter = 0;
-      this.levelEnergy = 0;
+
+    if (!rendered && this.committed && this.started && this.queue.length === 0 && !this.haveCurrentSample) {
+      this.started = false;
+      this.committed = false;
+      this.smoothedLevel = 0;
+      this.port.postMessage({ type: "level", level: 0 });
+      this.port.postMessage({ type: "playback-end" });
     }
-    if ((this.consumedSinceReport >= sampleRate / 20) || (wrote > 0 && !active) || (this.wasActive && !active)) {
-      this.port.postMessage({ type: "consumed", consumed: this.consumedSinceReport });
-      this.consumedSinceReport = 0;
-    }
-    this.wasActive = active;
     return true;
   }
 }
 
-registerProcessor("deskpet-playback", DeskPetPlaybackProcessor);
+registerProcessor("deskpet-playback", DeskpetPlaybackProcessor);

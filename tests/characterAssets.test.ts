@@ -16,7 +16,12 @@ describe("Greus Cat character replacement", () => {
   });
 
   it("removes every legacy character asset and retains one semantic SVG rig", async () => {
-    const legacyAssets = (await readdir(path.resolve("public/characters"))).filter((name) => name.endsWith(".svg"));
+    let legacyAssets: string[] = [];
+    try {
+      legacyAssets = (await readdir(path.resolve("public/characters"))).filter((name) => name.endsWith(".svg"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     expect(legacyAssets).toEqual([]);
     const source = await readFile(path.resolve("src/renderer/components/GreusCat.tsx"), "utf8");
     for (const id of ["rig-root", "body", "face", "mouth", "tail-base", "head-pet-hitbox"]) {

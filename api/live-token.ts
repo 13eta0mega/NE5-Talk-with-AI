@@ -23,11 +23,22 @@ function speechConfig(modelId: string, voiceName: string): Record<string, unknow
   const config: Record<string, unknown> = {
     voiceConfig: { prebuiltVoiceConfig: { voiceName } },
   };
-  // 2.5 Native Audio chooses language from the conversation. Supplying a
-  // languageCode is unnecessary and has caused compatibility issues on preview
-  // revisions, so only 3.1 receives the explicit Korean output hint.
   if (!isGemini25LiveModel(modelId)) config.languageCode = KOREAN_LANGUAGE_CODE;
   return config;
+}
+
+function supportsBidi(actions: string[]): boolean {
+  return actions.some((action) => action.toLowerCase().includes("bidi"));
+}
+
+async function modelAvailableForConversation(client: Awaited<ReturnType<typeof createClient>>, modelId: string): Promise<boolean> {
+  if (!isConversationalLiveModel(modelId)) return false;
+  const pager = await client.models.list({ config: { pageSize: 100 } });
+  for await (const model of pager) {
+    if (normalizeLiveModelId(model.name) !== modelId) continue;
+    return supportsBidi(model.supportedActions ?? []);
+  }
+  return false;
 }
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
@@ -47,11 +58,14 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       return;
     }
     const modelId = normalizeLiveModelId(body.modelId);
-    if (!isConversationalLiveModel(modelId)) {
-      response.status(400).json({ error: "이 모델은 DeskPet 양방향 음성 대화를 지원하지 않습니다. 모델 목록을 새로고침해 주세요." });
+    const clientApiKey = normalizeClientApiKey(body.apiKey);
+    const client = await createClient(clientApiKey);
+    if (!await modelAvailableForConversation(client, modelId)) {
+      response.status(400).json({
+        error: "선택한 모델이 현재 API 키에서 양방향 Native Audio Live 모델로 조회되지 않습니다. 모델 목록을 새로고침해 주세요.",
+      });
       return;
     }
-    const clientApiKey = normalizeClientApiKey(body.apiKey);
     const resumeHandle = typeof body.resumeHandle === "string"
       && body.resumeHandle.length <= 8192
       && body.resumeVoiceName === body.voiceName
@@ -61,7 +75,6 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       : undefined;
     const memorySummary = typeof body.memorySummary === "string" ? body.memorySummary.slice(0, 1600) : undefined;
     const now = Date.now();
-    const client = await createClient(clientApiKey);
     const transcription = transcriptionConfig(modelId);
     const constrainedConfig: Record<string, unknown> = {
       responseModalities: ["AUDIO"],
@@ -73,9 +86,8 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
       systemInstruction: { parts: [{ text: buildSystemInstruction(body.characterId, memorySummary) }] },
     };
-    // The 2.5 Native Audio preview has had intermittent session-closing issues
-    // around function calling. Keep conversation stability first and let the
-    // renderer keep its existing expression until a later 2.5 revision fixes it.
+    // Keep the unstable 2.5 preview on the conservative profile. Newer Live
+    // models discovered from models.list() automatically get the richer profile.
     if (!isGemini25LiveModel(modelId)) constrainedConfig.tools = [expressionTool()];
 
     const token = await client.authTokens.create({ config: {

@@ -8,6 +8,17 @@ const GESTURES = new Set<GestureId>([
   "none", "nod", "head_tilt_left", "head_tilt_right", "bounce", "wave", "shiver", "sway", "lean_forward", "settle",
 ]);
 
+const KOREAN_LANGUAGE_CODE = "ko-KR";
+const REALTIME_INPUT_CONFIG = {
+  automaticActivityDetection: {
+    disabled: false,
+    startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+    endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+    prefixPaddingMs: 250,
+    silenceDurationMs: 650,
+  },
+};
+
 function expressionTool() {
   return {
     functionDeclarations: [
@@ -59,26 +70,26 @@ export class GeminiLiveAdapter {
     this.ready = false;
     this.session = undefined;
     const credentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId });
-
-    // Do not pin v1alpha. The current Gemini API and GenAI SDK default to
-    // v1beta, where Live API and ephemeral auth_tokens are exposed.
     const ai = new GoogleGenAI({ apiKey: credentials.token });
 
     const session = await ai.live.connect({
       model: credentials.model,
       config: {
         responseModalities: [Modality.AUDIO],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
+        speechConfig: {
+          languageCode: KOREAN_LANGUAGE_CODE,
+          voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+        },
+        inputAudioTranscription: { languageCodes: [KOREAN_LANGUAGE_CODE] },
+        outputAudioTranscription: { languageCodes: [KOREAN_LANGUAGE_CODE] },
+        realtimeInputConfig: REALTIME_INPUT_CONFIG,
         contextWindowCompression: { slidingWindow: {} },
         sessionResumption: {},
         tools: [expressionTool()],
       } as never,
       callbacks: {
         onopen: () => {
-          // @google/genai resolves live.connect only after the server sends setupComplete.
-          // Do not mark the session ready at raw WebSocket open time.
+          // @google/genai resolves live.connect only after setupComplete.
         },
         onmessage: (message: unknown) => {
           if (epoch === this.connectionEpoch) this.handleMessage(message as Record<string, any>, characterId, voiceName, modelId);
@@ -148,6 +159,7 @@ export class GeminiLiveAdapter {
     const outputText = serverContent?.outputTranscription?.text;
     if (inputText) this.emit({ type: "input-transcript", text: inputText });
     if (outputText) this.emit({ type: "output-transcript", text: outputText });
+    if (serverContent?.waitingForInput) this.emit({ type: "waiting-for-input" });
     if (serverContent?.generationComplete) this.emit({ type: "generation-complete" });
     if (serverContent?.turnComplete) this.emit({ type: "turn-complete" });
     if (serverContent?.interrupted) this.emit({ type: "interrupted" });

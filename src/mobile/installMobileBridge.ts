@@ -139,10 +139,9 @@ export function installMobileBridge(): void {
       async get() {
         const local = readStoredSettings();
         const localApiKey = readStoredApiKey();
-        const status = await apiRequest<{ hasApiKey: boolean }>("/api/mobile-status").catch(() => ({ hasApiKey: false }));
         return {
-          hasApiKey: Boolean(localApiKey) || status.hasApiKey,
-          keySource: localApiKey ? "browser-storage" : status.hasApiKey ? "broker" : "none",
+          hasApiKey: Boolean(localApiKey),
+          keySource: localApiKey ? "browser-storage" : "none",
           apiKeyEditable: true,
           encryptionAvailable: false,
           ...local,
@@ -169,9 +168,8 @@ export function installMobileBridge(): void {
     catalog: {
       listLiveModels: () => {
         const apiKey = readStoredApiKey();
-        return apiKey
-          ? apiRequest("/api/live-models", { method: "POST", body: JSON.stringify({ apiKey }) })
-          : apiRequest("/api/live-models");
+        if (!apiKey) throw new Error("설정에서 Gemini API 키를 먼저 입력해 주세요.");
+        return apiRequest("/api/live-models", { method: "POST", body: JSON.stringify({ apiKey }) });
       },
     },
     session: {

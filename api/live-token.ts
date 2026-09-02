@@ -77,20 +77,25 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const memorySummary = typeof body.memorySummary === "string" ? body.memorySummary.slice(0, 1600) : undefined;
     const now = Date.now();
     const transcription = transcriptionConfig(modelId);
-    const expressionToolAvailable = !isGemini25LiveModel(modelId);
+    const is25 = isGemini25LiveModel(modelId);
+    const expressionToolAvailable = !is25;
     const constrainedConfig: Record<string, unknown> = {
       responseModalities: ["AUDIO"],
       speechConfig: speechConfig(modelId, body.voiceName),
       inputAudioTranscription: transcription,
       outputAudioTranscription: transcription,
       realtimeInputConfig: REALTIME_INPUT_CONFIG,
-      contextWindowCompression: { slidingWindow: {} },
       sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
       systemInstruction: {
         parts: [{ text: buildSystemInstruction(body.characterId, memorySummary, expressionToolAvailable) }],
       },
     };
-    if (expressionToolAvailable) constrainedConfig.tools = [expressionTool()];
+    if (is25) {
+      constrainedConfig.thinkingConfig = { thinkingBudget: 0 };
+    } else {
+      constrainedConfig.contextWindowCompression = { slidingWindow: {} };
+      constrainedConfig.tools = [expressionTool()];
+    }
 
     const token = await client.authTokens.create({ config: {
       uses: 1,

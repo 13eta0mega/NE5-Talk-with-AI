@@ -22,7 +22,7 @@ describe("multi-turn microphone capture", () => {
     expect(engine).toContain("navigator.mediaDevices.getUserMedia");
   });
 
-  it("reopens the PCM gate after model playback drains", async () => {
+  it("reopens the PCM gate immediately after model playback drains", async () => {
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     const start = coordinator.indexOf("private async finishSpeakingWhenDrained");
     const end = coordinator.indexOf("diagnostics()", start);
@@ -30,6 +30,7 @@ describe("multi-turn microphone capture", () => {
 
     expect(finish).toContain("await this.restoreListeningCapture()");
     expect(finish).toContain("this.audio.gate.open()");
-    expect(finish).toContain('this.transition("PLAYBACK_DRAINED")');
+    expect(finish).toContain('this.update({ phase: "listening", error: undefined })');
+    expect(finish).toContain("PLAYBACK_TAIL_GUARD_MS");
   });
 });

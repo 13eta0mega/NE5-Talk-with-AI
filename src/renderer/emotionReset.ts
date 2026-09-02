@@ -1,6 +1,6 @@
 import type { ConversationPhase, EmotionId } from "../core/types";
 
-export const EMOTION_IDLE_RESET_MS = 10_000;
+export const EMOTION_IDLE_RESET_MS = 5_000;
 export const EMOTION_AUDIO_ACTIVITY_THRESHOLD = .075;
 
 export function shouldResetEmotion({

@@ -75,7 +75,12 @@ export default function App() {
   const phase = demoPhase ?? snapshot.phase;
   const audioCapabilities = coordinator.audio.deviceCapabilities;
   const micDiagnostics = coordinator.audio.gate.diagnostics();
-  const micReady = !demoPhase && snapshot.phase === "listening" && coordinator.audio.captureActive && micDiagnostics.open && !micDiagnostics.speaking;
+  const micReady = !demoPhase
+    && snapshot.phase === "listening"
+    && coordinator.audio.captureActive
+    && coordinator.audio.captureHeartbeatFresh
+    && micDiagnostics.open
+    && !micDiagnostics.speaking;
 
   useEffect(() => coordinator.subscribe(setSnapshot), [coordinator]);
   const refreshModels = async () => {
@@ -218,12 +223,8 @@ export default function App() {
   const sendChat = async (text: string) => {
     setChatMessages((messages) => [...messages, { id: ++chatMessageId.current, role: "user", text }]);
     lastAssistantMessage.current = "";
-    try {
-      await coordinator.sendText(text);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "메시지를 보내지 못했습니다.");
-      throw error;
-    }
+    try { await coordinator.sendText(text); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "메시지를 보내지 못했습니다."); throw error; }
   };
 
   const selectCharacter = async (id: string) => {
@@ -234,9 +235,7 @@ export default function App() {
     setChatMessages([]);
     lastAssistantMessage.current = "";
     void window.deskPet?.settings.savePreferences({ characterId: id });
-    setEmotion("idle");
-    setEmotionIntensity(1);
-    setIdlePreview("auto");
+    setEmotion("idle"); setEmotionIntensity(1); setIdlePreview("auto");
     await coordinator.switchCharacter(id, voice, modelId);
   };
 
@@ -294,7 +293,7 @@ export default function App() {
 
   const status = STATUS[phase];
   const visibleStatusLabel = micReady ? "마이크 입력 가능" : status.label;
-  const visibleStatusNote = micReady ? "지금 말하면 바로 입력돼" : status.note;
+  const visibleStatusNote = micReady ? "실제 마이크 PCM 입력이 확인됐어" : status.note;
   const chatDisabled = ["disconnected", "connecting", "reconnecting", "error", "speaking", "thinking"].includes(snapshot.phase);
   return (
     <div className="app-shell">

@@ -10,22 +10,12 @@ describe("Gemini Live audio messages", () => {
     const adapter = new GeminiLiveAdapter();
     const events: ProviderEvent[] = [];
     adapter.onEvent((event) => events.push(event));
-
     const handleMessage = (adapter as unknown as {
       handleMessage(message: Record<string, unknown>, characterId: string, voiceName: string, modelId: string): void;
     }).handleMessage.bind(adapter);
-    handleMessage({
-      serverContent: {
-        modelTurn: {
-          parts: [
-            { inlineData: { data: "AQACAA==" } },
-            { text: "중간 텍스트" },
-            { inlineData: { data: "AwAEAA==" } },
-          ],
-        },
-      },
-    }, "greus-greeny", "Leda", "gemini-3.1-flash-live-preview");
-
+    handleMessage({ serverContent: { modelTurn: { parts: [
+      { inlineData: { data: "AQACAA==" } }, { text: "중간 텍스트" }, { inlineData: { data: "AwAEAA==" } },
+    ] } } }, "greus-greeny", "Leda", "gemini-3.1-flash-live-preview");
     const audio = events.filter((event): event is Extract<ProviderEvent, { type: "audio" }> => event.type === "audio");
     expect(audio).toHaveLength(2);
     expect([...audio[0].pcm]).toEqual([1, 2]);
@@ -63,7 +53,6 @@ describe("Gemini Live audio messages", () => {
     expect(isConversationalLiveModel("gemini-3.5-live-translate-preview")).toBe(false);
     expect(isConversationalLiveModel("gemini-2.0-flash-live-001")).toBe(false);
     expect(coerceConversationalLiveModel("gemini-2.0-flash-live-001")).toBe("gemini-3.1-flash-live-preview");
-
     const listSource = await readFile(path.resolve("api/live-models.ts"), "utf8");
     const tokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     expect(listSource).not.toContain("const SUPPORTED = new Set");
@@ -73,15 +62,16 @@ describe("Gemini Live audio messages", () => {
     expect(tokenSource).toContain("client.models.list");
   });
 
-  it("uses a lean 2.5 Native Audio config and keeps richer newer-model features", async () => {
+  it("uses a lean 2.5 Native Audio config and sensitive speech-start detection", async () => {
     const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const tokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     for (const source of [adapterSource, tokenSource]) {
       expect(source).toContain('KOREAN_LANGUAGE_CODE = "ko-KR"');
       expect(source).toContain("isGemini25LiveModel");
       expect(source).toContain("languageCodes: [KOREAN_LANGUAGE_CODE]");
-      expect(source).toContain('startOfSpeechSensitivity: "START_SENSITIVITY_LOW"');
+      expect(source).toContain('startOfSpeechSensitivity: "START_SENSITIVITY_HIGH"');
       expect(source).toContain('endOfSpeechSensitivity: "END_SENSITIVITY_HIGH"');
+      expect(source).toContain("prefixPaddingMs: 120");
       expect(source).toContain("silenceDurationMs: 650");
       expect(source).toContain("thinkingBudget: 0");
       expect(source).toContain("contextWindowCompression");

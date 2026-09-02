@@ -40,6 +40,7 @@ export class ConversationCoordinator {
   private inputTranscriptOpen = false;
   private outputTranscriptOpen = false;
   private reconnectTimer?: number;
+  private capturePauseForPlayback?: Promise<void>;
 
   constructor() {
     this.provider.onEvent((event) => void this.handleProviderEvent(event));
@@ -76,6 +77,23 @@ export class ConversationCoordinator {
     this.update({ phase: nextPhase(this.snapshot.phase, event) });
   }
 
+  private async enterPlaybackMode(): Promise<void> {
+    if (!this.capturePauseForPlayback) {
+      this.audio.gate.close();
+      this.capturePauseForPlayback = this.audio.pauseCaptureForPlayback();
+    }
+    await this.capturePauseForPlayback;
+  }
+
+  private async restoreListeningCapture(): Promise<void> {
+    try {
+      if (this.capturePauseForPlayback) await this.capturePauseForPlayback;
+      if (this.desiredListening) await this.audio.startCapture(this.microphoneDeviceId);
+    } finally {
+      this.capturePauseForPlayback = undefined;
+    }
+  }
+
   async connect(characterId: string, voiceName: string, modelId: string): Promise<void> {
     this.disposed = false;
     this.characterId = characterId;
@@ -99,6 +117,7 @@ export class ConversationCoordinator {
     }
     this.desiredListening = true;
     this.microphoneDeviceId = deviceId;
+    this.capturePauseForPlayback = undefined;
     await this.audio.startCapture(deviceId);
     this.audio.gate.setSpeaking(false);
     this.audio.gate.open();
@@ -137,6 +156,7 @@ export class ConversationCoordinator {
     this.lastEmotion = "idle";
     this.lastEmotionIntensity = 1;
     await this.audio.stopCapture();
+    this.capturePauseForPlayback = undefined;
     await this.provider.close();
     this.update({ phase: "disconnected", inputTranscript: "", outputTranscript: "", resumed: false });
   }
@@ -185,7 +205,7 @@ export class ConversationCoordinator {
           error: undefined,
         });
         if (this.desiredListening) {
-          await this.audio.startCapture(this.microphoneDeviceId);
+          await this.restoreListeningCapture();
           this.audio.gate.setSpeaking(false);
           this.audio.gate.open();
         }
@@ -196,6 +216,7 @@ export class ConversationCoordinator {
         this.generationComplete = false;
         this.audio.gate.setSpeaking(true);
         if (this.snapshot.phase !== "speaking") this.transition("MODEL_AUDIO_START");
+        await this.enterPlaybackMode();
         await this.audio.enqueuePcm24k(event.pcm);
         break;
       case "generation-complete":
@@ -212,9 +233,10 @@ export class ConversationCoordinator {
         this.audio.flushPlayback();
         this.audio.gate.setSpeaking(false);
         if (this.desiredListening) {
+          await this.restoreListeningCapture();
           this.audio.gate.open();
           this.update({ phase: "listening" });
-        }
+        } else this.capturePauseForPlayback = undefined;
         break;
       case "input-transcript": {
         const previous = this.inputTranscriptOpen ? this.snapshot.inputTranscript : "";
@@ -249,9 +271,11 @@ export class ConversationCoordinator {
     if (!this.generationComplete || sequence !== this.audioSequence) return;
     this.audio.gate.setSpeaking(false);
     if (this.desiredListening) {
+      await this.restoreListeningCapture();
       this.audio.gate.open();
       this.transition("PLAYBACK_DRAINED");
     } else {
+      this.capturePauseForPlayback = undefined;
       this.update({ phase: "idle" });
     }
   }
@@ -267,5 +291,6 @@ export class ConversationCoordinator {
     this.audio.gate.close();
     await this.provider.close();
     await this.audio.dispose();
+    this.capturePauseForPlayback = undefined;
   }
 }

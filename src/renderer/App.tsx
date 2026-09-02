@@ -158,6 +158,20 @@ export default function App() {
     }
   };
 
+  const pickSpeaker = async () => {
+    try {
+      const selected = await coordinator.audio.requestOutputDevice(speakerId);
+      setSpeakerId(selected.deviceId);
+      void window.deskPet?.settings.savePreferences({ speakerId: selected.deviceId });
+      const devices = await coordinator.audio.listDevices(false);
+      setMicrophones(devices.microphones);
+      setSpeakers(devices.speakers);
+      setNotice(`${selected.label || "선택한 출력 장치"}로 소리를 재생합니다.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "출력 장치를 선택하지 못했습니다.");
+    }
+  };
+
   useEffect(() => {
     void refreshDevices(false);
     const listener = () => void refreshDevices(false);
@@ -366,6 +380,8 @@ export default function App() {
         onRefreshDevices={() => void refreshDevices(true)}
         microphoneSelectionSupported={audioCapabilities.microphoneSelection}
         speakerSelectionSupported={audioCapabilities.speakerSelection}
+        speakerPickerSupported={audioCapabilities.speakerPicker}
+        onPickSpeaker={() => void pickSpeaker()}
       />
     </div>
   );

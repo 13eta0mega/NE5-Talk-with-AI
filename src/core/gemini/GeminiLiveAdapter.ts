@@ -1,6 +1,7 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { EMOTION_IDS, normalizeEmotionId, type GestureId, type ProviderEvent } from "../types";
 import { int16ToBase64 } from "../audio/pcm";
+import { normalizeLiveModelId } from "./catalog";
 
 type Subscriber = (event: ProviderEvent) => void;
 
@@ -9,6 +10,7 @@ const GESTURES = new Set<GestureId>([
 ]);
 
 const KOREAN_LANGUAGE_CODE = "ko-KR";
+const GEMINI_25_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
 const REALTIME_INPUT_CONFIG = {
   automaticActivityDetection: {
     disabled: false,
@@ -18,6 +20,12 @@ const REALTIME_INPUT_CONFIG = {
     silenceDurationMs: 650,
   },
 };
+
+function transcriptionConfig(modelId: string): Record<string, unknown> {
+  return normalizeLiveModelId(modelId) === GEMINI_25_LIVE_MODEL
+    ? {}
+    : { languageCodes: [KOREAN_LANGUAGE_CODE] };
+}
 
 function expressionTool() {
   return {
@@ -71,6 +79,7 @@ export class GeminiLiveAdapter {
     this.session = undefined;
     const credentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId });
     const ai = new GoogleGenAI({ apiKey: credentials.token });
+    const transcription = transcriptionConfig(credentials.model);
 
     const session = await ai.live.connect({
       model: credentials.model,
@@ -80,8 +89,8 @@ export class GeminiLiveAdapter {
           languageCode: KOREAN_LANGUAGE_CODE,
           voiceConfig: { prebuiltVoiceConfig: { voiceName } },
         },
-        inputAudioTranscription: { languageCodes: [KOREAN_LANGUAGE_CODE] },
-        outputAudioTranscription: { languageCodes: [KOREAN_LANGUAGE_CODE] },
+        inputAudioTranscription: transcription,
+        outputAudioTranscription: transcription,
         realtimeInputConfig: REALTIME_INPUT_CONFIG,
         contextWindowCompression: { slidingWindow: {} },
         sessionResumption: {},

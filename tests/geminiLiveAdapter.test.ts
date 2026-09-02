@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GeminiLiveAdapter } from "../src/core/gemini/GeminiLiveAdapter";
+import { CONVERSATIONAL_LIVE_MODELS, coerceConversationalLiveModel, isConversationalLiveModel } from "../src/core/gemini/catalog";
 import type { ProviderEvent } from "../src/core/types";
 
 describe("Gemini Live audio messages", () => {
@@ -51,13 +52,31 @@ describe("Gemini Live audio messages", () => {
     expect(serverSource).not.toContain('apiVersion: "v1alpha"');
   });
 
-  it("pins speech recognition and speech output to Korean", async () => {
+  it("keeps only current conversational audio-to-audio Live models", async () => {
+    expect(CONVERSATIONAL_LIVE_MODELS).toEqual([
+      "gemini-3.1-flash-live-preview",
+      "gemini-2.5-flash-native-audio-preview-12-2025",
+    ]);
+    expect(isConversationalLiveModel("models/gemini-2.5-flash-native-audio-preview-12-2025")).toBe(true);
+    expect(isConversationalLiveModel("gemini-3.5-transcribe-live")).toBe(false);
+    expect(isConversationalLiveModel("gemini-3.5-live-translate-preview")).toBe(false);
+    expect(isConversationalLiveModel("gemini-2.0-flash-live-001")).toBe(false);
+    expect(coerceConversationalLiveModel("gemini-2.0-flash-live-001")).toBe("gemini-3.1-flash-live-preview");
+
+    const listSource = await readFile(path.resolve("api/live-models.ts"), "utf8");
+    expect(listSource).toContain("CONVERSATIONAL_LIVE_MODELS");
+    expect(listSource).toContain("if (!SUPPORTED.has(id)) continue");
+  });
+
+  it("pins Korean on 3.1 and uses backward-compatible transcription config on 2.5", async () => {
     const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const tokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     for (const source of [adapterSource, tokenSource]) {
       expect(source).toContain('KOREAN_LANGUAGE_CODE = "ko-KR"');
+      expect(source).toContain('GEMINI_25_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"');
       expect(source).toContain("languageCodes: [KOREAN_LANGUAGE_CODE]");
       expect(source).toContain("languageCode: KOREAN_LANGUAGE_CODE");
+      expect(source).toContain("? {}");
       expect(source).toContain('startOfSpeechSensitivity: "START_SENSITIVITY_LOW"');
       expect(source).toContain('endOfSpeechSensitivity: "END_SENSITIVITY_HIGH"');
       expect(source).toContain("silenceDurationMs: 650");

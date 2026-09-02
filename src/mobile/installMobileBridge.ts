@@ -1,5 +1,5 @@
 import type { LogicalSessionPublic, SecureSettingsPublic } from "../core/types";
-import { CHARACTER_VOICE_PROFILE_VERSION, DEFAULT_LIVE_MODEL, DEFAULT_VOICE_NAME } from "../core/gemini/catalog";
+import { CHARACTER_VOICE_PROFILE_VERSION, coerceConversationalLiveModel, DEFAULT_LIVE_MODEL, DEFAULT_VOICE_NAME } from "../core/gemini/catalog";
 
 const SETTINGS_KEY = "deskpet:mobile-settings:v1";
 const API_KEY_STORAGE_KEY = "deskpet:mobile-gemini-api-key:v1";
@@ -61,17 +61,25 @@ function clearResumeState(): void {
 
 export function readStoredSettings(): StoredSettings {
   const settings = readJson(SETTINGS_KEY, defaultSettings);
+  let migrated = settings;
+  let changed = false;
+
+  const supportedModel = coerceConversationalLiveModel(settings.selectedModelId);
+  if (supportedModel !== settings.selectedModelId) {
+    migrated = { ...migrated, selectedModelId: supportedModel };
+    changed = true;
+  }
+
   const profileVersion = Number(localStorage.getItem(VOICE_PROFILE_VERSION_KEY) ?? "1");
-  if (profileVersion < CHARACTER_VOICE_PROFILE_VERSION && settings.selectedVoiceName === "Kore") {
-    const migrated = { ...settings, selectedVoiceName: DEFAULT_VOICE_NAME };
-    writeJson(SETTINGS_KEY, migrated);
-    localStorage.setItem(VOICE_PROFILE_VERSION_KEY, String(CHARACTER_VOICE_PROFILE_VERSION));
-    return migrated;
+  if (profileVersion < CHARACTER_VOICE_PROFILE_VERSION && migrated.selectedVoiceName === "Kore") {
+    migrated = { ...migrated, selectedVoiceName: DEFAULT_VOICE_NAME };
+    changed = true;
   }
   if (profileVersion < CHARACTER_VOICE_PROFILE_VERSION) {
     localStorage.setItem(VOICE_PROFILE_VERSION_KEY, String(CHARACTER_VOICE_PROFILE_VERSION));
   }
-  return settings;
+  if (changed) writeJson(SETTINGS_KEY, migrated);
+  return migrated;
 }
 
 function sessionKey(characterId: string): string {
@@ -161,7 +169,16 @@ export function installMobileBridge(): void {
       },
       async savePreferences(patch) {
         const current = readStoredSettings();
-        writeJson(SETTINGS_KEY, { ...current, ...patch });
+        const next: StoredSettings = {
+          ...current,
+          selectedVoiceName: typeof patch.voiceName === "string" ? patch.voiceName : current.selectedVoiceName,
+          selectedModelId: typeof patch.modelId === "string" ? coerceConversationalLiveModel(patch.modelId) : current.selectedModelId,
+          selectedCharacterId: typeof patch.characterId === "string" ? patch.characterId : current.selectedCharacterId,
+          microphoneId: typeof patch.microphoneId === "string" ? patch.microphoneId : current.microphoneId,
+          speakerId: typeof patch.speakerId === "string" ? patch.speakerId : current.speakerId,
+          transcriptEnabled: typeof patch.transcriptEnabled === "boolean" ? patch.transcriptEnabled : current.transcriptEnabled,
+        };
+        writeJson(SETTINGS_KEY, next);
         return { ok: true };
       },
     },

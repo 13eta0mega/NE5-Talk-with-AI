@@ -13,4 +13,29 @@ export const VOICE_CATALOG = [
 
 export const DEFAULT_VOICE_NAME = "Leda";
 export const CHARACTER_VOICE_PROFILE_VERSION = 2;
-export const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
+
+// Keep this list intentionally narrow. models.list() also returns Live
+// transcription/translation models and legacy IDs whose names contain "live",
+// but DeskPet requires bidirectional conversational AUDIO output.
+export const CONVERSATIONAL_LIVE_MODELS = [
+  "gemini-3.1-flash-live-preview",
+  "gemini-2.5-flash-native-audio-preview-12-2025",
+] as const;
+
+export type ConversationalLiveModelId = (typeof CONVERSATIONAL_LIVE_MODELS)[number];
+export const DEFAULT_LIVE_MODEL: ConversationalLiveModelId = "gemini-3.1-flash-live-preview";
+
+const CONVERSATIONAL_LIVE_MODEL_SET = new Set<string>(CONVERSATIONAL_LIVE_MODELS);
+
+export function normalizeLiveModelId(value: unknown): string {
+  return typeof value === "string" ? value.replace(/^models\//, "") : "";
+}
+
+export function isConversationalLiveModel(value: unknown): value is ConversationalLiveModelId {
+  return CONVERSATIONAL_LIVE_MODEL_SET.has(normalizeLiveModelId(value));
+}
+
+export function coerceConversationalLiveModel(value: unknown): ConversationalLiveModelId {
+  const normalized = normalizeLiveModelId(value);
+  return isConversationalLiveModel(normalized) ? normalized : DEFAULT_LIVE_MODEL;
+}

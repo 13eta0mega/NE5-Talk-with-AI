@@ -2,8 +2,10 @@ import {
   buildSystemInstruction, createClient, expressionTool, isCharacterId, isModelId, isTrustedBrowserRequest, isVoiceName,
   noStore, normalizeClientApiKey, parseBody, type ApiRequest, type ApiResponse,
 } from "./_shared.js";
+import { isConversationalLiveModel, normalizeLiveModelId } from "../src/core/gemini/catalog.js";
 
 const KOREAN_LANGUAGE_CODE = "ko-KR";
+const GEMINI_25_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
 const REALTIME_INPUT_CONFIG = {
   automaticActivityDetection: {
     disabled: false,
@@ -13,6 +15,13 @@ const REALTIME_INPUT_CONFIG = {
     silenceDurationMs: 650,
   },
 };
+
+function transcriptionConfig(modelId: string): Record<string, unknown> {
+  // The 2.5 native-audio preview predates the newer language-hint fields now
+  // used by 3.1 Live. Keep transcription enabled but let 2.5 auto-detect;
+  // speechConfig + the Korean system instruction still keep replies in Korean.
+  return modelId === GEMINI_25_LIVE_MODEL ? {} : { languageCodes: [KOREAN_LANGUAGE_CODE] };
+}
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   noStore(response);
@@ -30,26 +39,31 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       response.status(400).json({ error: "올바르지 않은 Live 연결 요청입니다." });
       return;
     }
-    const modelId = body.modelId.replace(/^models\//, "");
+    const modelId = normalizeLiveModelId(body.modelId);
+    if (!isConversationalLiveModel(modelId)) {
+      response.status(400).json({ error: "이 모델은 DeskPet 양방향 음성 대화를 지원하지 않습니다. 모델 목록을 새로고침해 주세요." });
+      return;
+    }
     const clientApiKey = normalizeClientApiKey(body.apiKey);
     const resumeHandle = typeof body.resumeHandle === "string"
       && body.resumeHandle.length <= 8192
       && body.resumeVoiceName === body.voiceName
       && typeof body.resumeModelId === "string"
-      && body.resumeModelId.replace(/^models\//, "") === modelId
+      && normalizeLiveModelId(body.resumeModelId) === modelId
       ? body.resumeHandle
       : undefined;
     const memorySummary = typeof body.memorySummary === "string" ? body.memorySummary.slice(0, 1600) : undefined;
     const now = Date.now();
     const client = await createClient(clientApiKey);
+    const transcription = transcriptionConfig(modelId);
     const constrainedConfig = {
       responseModalities: ["AUDIO"],
       speechConfig: {
         languageCode: KOREAN_LANGUAGE_CODE,
         voiceConfig: { prebuiltVoiceConfig: { voiceName: body.voiceName } },
       },
-      inputAudioTranscription: { languageCodes: [KOREAN_LANGUAGE_CODE] },
-      outputAudioTranscription: { languageCodes: [KOREAN_LANGUAGE_CODE] },
+      inputAudioTranscription: transcription,
+      outputAudioTranscription: transcription,
       realtimeInputConfig: REALTIME_INPUT_CONFIG,
       contextWindowCompression: { slidingWindow: {} },
       sessionResumption: resumeHandle ? { handle: resumeHandle } : {},

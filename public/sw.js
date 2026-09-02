@@ -1,4 +1,4 @@
-const CACHE_NAME = "deskpet-shell-v1";
+const CACHE_NAME = "deskpet-shell-v2";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/characters/pet-orbit-bot.svg"];
 
 self.addEventListener("install", (event) => {
@@ -22,6 +22,14 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(fetch(request).catch(() => caches.match("/index.html")));
     return;
   }
+
+  if (url.pathname.startsWith("/worklets/")) {
+    event.respondWith(
+      fetch(request, { cache: "no-store" }).catch(() => caches.match(request)),
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(request).then((cached) => cached || fetch(request).then((response) => {
       if (response.ok) void caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));

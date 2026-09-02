@@ -66,4 +66,12 @@ describe("mobile token broker boundary", () => {
     expect(source).toContain("API_TIMEOUT_MS = 12000");
     expect(source).toContain("controller.abort()");
   });
+
+  it("persists UI preference aliases and migrates unsupported Live models", async () => {
+    const source = await readFile(path.resolve("src/mobile/installMobileBridge.ts"), "utf8");
+    expect(source).toContain("coerceConversationalLiveModel(settings.selectedModelId)");
+    expect(source).toContain('typeof patch.voiceName === "string" ? patch.voiceName');
+    expect(source).toContain('typeof patch.modelId === "string" ? coerceConversationalLiveModel(patch.modelId)');
+    expect(source).toContain('typeof patch.characterId === "string" ? patch.characterId');
+  });
 });

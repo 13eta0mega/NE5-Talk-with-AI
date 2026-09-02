@@ -23,6 +23,15 @@ function toneWavBlob(frequency = 660, durationMs = 850, sampleRate = 24000): Blo
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+function keyStatus(settings?: SecureSettingsPublic): string {
+  if (!settings?.hasApiKey) return "미설정";
+  if (settings.keySource === "environment") return "환경 변수 사용 중";
+  if (settings.keySource === "broker") return "서버 키 사용 가능";
+  if (settings.keySource === "browser-storage") return "이 기기에 저장됨";
+  if (settings.keySource === "secure-storage") return "암호화 저장됨";
+  return "설정됨";
+}
+
 export function SettingsDrawer({
   open, onClose, voice, onVoice, modelId, onModel, liveModels, modelsLoading, onRefreshModels,
   secureSettings, onSaveApiKey, onClearApiKey, microphones, speakers, microphoneId, speakerId,
@@ -46,7 +55,7 @@ export function SettingsDrawer({
   const [microphoneTestState, setMicrophoneTestState] = useState<"idle" | "running" | "ok" | "error">("idle");
   const [microphoneTestLevel, setMicrophoneTestLevel] = useState(0);
   const testRun = useRef(0);
-  const brokerManaged = secureSettings?.keySource === "broker" || secureSettings?.apiKeyEditable === false;
+  const brokerManaged = secureSettings?.apiKeyEditable === false;
 
   const submitKey = async () => {
     if (!apiKey.trim()) return;
@@ -130,13 +139,13 @@ export function SettingsDrawer({
     <aside className={`settings-drawer ${open ? "open" : ""}`} aria-hidden={!open}>
       <div className="modal-heading"><div><span className="eyebrow">SETTINGS · AUTO SAVE</span><h2>Gemini와 소리</h2><small className="autosave-note">선택값은 변경 즉시 저장되고 다음 실행 때 복원됩니다.</small></div><button className="icon-button" onClick={onClose} aria-label="닫기">×</button></div>
       <div className="setting-block api-key-block">
-        <div className="label-row"><label htmlFor="gemini-key">Gemini API 키</label><span className={`key-status ${secureSettings?.hasApiKey ? "saved" : ""}`}>{secureSettings?.hasApiKey ? secureSettings.keySource === "environment" ? "환경 변수 사용 중" : secureSettings.keySource === "broker" ? "서버에서 보호 중" : "암호화 저장됨" : "미설정"}</span></div>
+        <div className="label-row"><label htmlFor="gemini-key">Gemini API 키</label><span className={`key-status ${secureSettings?.hasApiKey ? "saved" : ""}`}>{keyStatus(secureSettings)}</span></div>
         {brokerManaged ? (
-          <div className="broker-key-note"><span>☁</span><p><strong>모바일 보안 연결</strong><br />API 키는 이 스마트폰에 저장되지 않고 HTTPS 서버에서 일회용 Live 토큰으로 교환됩니다.</p></div>
+          <div className="broker-key-note"><span>☁</span><p><strong>서버 관리 키</strong><br />이 배포에서는 API 키를 서버에서 관리합니다.</p></div>
         ) : <>
           <div className="secret-input"><input id="gemini-key" type={showKey ? "text" : "password"} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={secureSettings?.hasApiKey ? "새 키로 교체하려면 입력" : "새 API 키 입력"} autoComplete="off" /><button onClick={() => setShowKey(!showKey)} aria-label={showKey ? "API 키 숨기기" : "API 키 보기"}>{showKey ? "숨김" : "보기"}</button></div>
-          <div className="setting-actions"><button className="primary-mini" disabled={saving || !apiKey.trim()} onClick={() => void submitKey()}>{saving ? "저장 중…" : "안전하게 저장"}</button>{secureSettings?.hasApiKey && secureSettings.keySource !== "environment" && <button className="text-button danger" onClick={() => void onClearApiKey()}>저장 키 삭제</button>}</div>
-          <p className="hint">키는 Windows 보안 저장소로 암호화되어 앱 재실행 후에도 유지됩니다. 렌더러나 로그에는 다시 표시하지 않습니다.</p>
+          <div className="setting-actions"><button className="primary-mini" disabled={saving || !apiKey.trim()} onClick={() => void submitKey()}>{saving ? "저장 중…" : "키 저장 · 교체"}</button>{secureSettings?.hasApiKey && secureSettings.keySource !== "environment" && <button className="text-button danger" onClick={() => void onClearApiKey()}>저장 키 삭제</button>}</div>
+          <p className="hint">{secureSettings?.keySource === "browser-storage" || secureSettings?.encryptionAvailable === false ? "모바일 웹에서는 키가 이 브라우저의 로컬 저장소에 보관됩니다. Gemini 연결 때만 같은 출처의 HTTPS 토큰 브로커로 전달되고 Live 세션에는 단기 토큰만 사용합니다." : "키는 OS 보안 저장소로 암호화되어 앱 재실행 후에도 유지됩니다. 렌더러나 로그에는 다시 표시하지 않습니다."}</p>
         </>}
       </div>
       <div className="setting-block">

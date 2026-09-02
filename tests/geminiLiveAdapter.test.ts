@@ -31,12 +31,13 @@ describe("Gemini Live audio messages", () => {
     expect([...audio[1].pcm]).toEqual([3, 4]);
   });
 
-  it("uses the SDK-supported v1alpha path for ephemeral Live tokens", async () => {
+  it("uses the current SDK v1beta default for ephemeral Live tokens", async () => {
     const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const serverSource = await readFile(path.resolve("api/_shared.ts"), "utf8");
-    expect(adapterSource).toContain('apiVersion: "v1alpha"');
-    expect(serverSource).toContain('apiVersion: "v1alpha"');
-    expect(adapterSource).not.toContain('apiVersion: "v1beta"');
+    expect(adapterSource).toContain("new GoogleGenAI({ apiKey: credentials.token })");
+    expect(serverSource).toContain("new GoogleGenAI({ apiKey: requireApiKey() })");
+    expect(adapterSource).not.toContain('apiVersion: "v1alpha"');
+    expect(serverSource).not.toContain('apiVersion: "v1alpha"');
   });
 
   it("does not announce ready at raw websocket open time", async () => {

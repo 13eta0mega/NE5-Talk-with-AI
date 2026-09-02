@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "../src/characters/catalog";
 import { COATS, IDLE_ACTIONS, MICROPHONE_TRIGGER_THRESHOLD } from "../src/renderer/components/GreusCat";
-import { ORIGINAL_SPEECH_LEVEL } from "../src/renderer/components/PetStage";
+import { MIN_AUDIBLE_SPEECH_LEVEL } from "../src/renderer/components/PetStage";
 import { PERSONA_IDS } from "../electron/personaVault";
 
 describe("Greus Cat character replacement", () => {
@@ -32,8 +32,8 @@ describe("Greus Cat character replacement", () => {
     expect(MICROPHONE_TRIGGER_THRESHOLD).toBeLessThan(.1);
   });
 
-  it("uses the source animator's exact tuned speech level", () => {
-    expect(ORIGINAL_SPEECH_LEVEL).toBe(.72);
+  it("keeps a low audible threshold for rendered-PCM lip sync", () => {
+    expect(MIN_AUDIBLE_SPEECH_LEVEL).toBe(.012);
   });
 
   it("keeps the source mouth cycle level-aware and isolated from yawn", async () => {

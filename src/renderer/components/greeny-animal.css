@@ -523,11 +523,11 @@
 .greus-cat[data-emotion="proud"] .rig-hand-right { transform: translate(-31px, 8px) rotate(-8deg); }
 .greus-cat[data-emotion="thinking"] .rig-hand-right { transform: translate(-47px, 7px); }
 
-/* The ω lip stays fixed; the masked lower mouth only slides vertically. */
-.greus-cat[data-speaking="true"] .morph-mouth-opening {
+/* The ω lip stays fixed; only the portion below it is revealed while talking. */
+.greus-cat[data-speaking="true"]:not([data-idle-action="yawn"]) .morph-mouth-opening {
   animation: talk-mouth-slide 900ms ease-in-out infinite;
 }
-.greus-cat[data-speaking="true"] .morph-mouth-line {
+.greus-cat[data-speaking="true"]:not([data-idle-action="yawn"]) .morph-mouth-line {
   animation: talk-mouth-lip 900ms ease-in-out infinite;
 }
 .greus-cat[data-emotion="laughing"][data-speaking="false"] .morph-mouth-opening {
@@ -900,17 +900,16 @@
 
 @keyframes talk-mouth-slide {
   0%, 100% { transform: translateY(-16px); }
-  22% { transform: translateY(-10px); }
+  22% { transform: translateY(var(--cat-mouth-soft-y)); }
   48% { transform: translateY(var(--cat-mouth-open-y)); }
   72% { transform: translateY(var(--cat-mouth-mid-y)); }
-  86% { transform: translateY(-12px); }
+  86% { transform: translateY(var(--cat-mouth-soft-y)); }
 }
 @keyframes talk-mouth-lip {
   0%, 100% { transform: scaleY(1); }
-  22% { transform: scaleY(.62); }
-  48% { transform: scaleY(.3); }
-  72% { transform: scaleY(.5); }
-  86% { transform: scaleY(.7); }
+  22%, 86% { transform: scaleY(var(--cat-mouth-lip-soft)); }
+  48% { transform: scaleY(var(--cat-mouth-lip-open)); }
+  72% { transform: scaleY(var(--cat-mouth-lip-mid)); }
 }
 
 @keyframes cat-laugh-mouth-open {

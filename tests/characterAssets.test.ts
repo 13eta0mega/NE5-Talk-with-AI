@@ -24,11 +24,22 @@ describe("Greus Cat character replacement", () => {
     }
     expect(IDLE_ACTIONS).toHaveLength(7);
     expect(source).toMatch(/if \(isSpeaking[\s\S]*?mouthLine: speakingFace\.mouthLine/);
+    expect(source).toContain('id={speakingMouthClipId}');
+    expect(source).toContain('M109 139.35 L111.5 139.35 C114 140.7 117 141.15 120 139.35 C123 141.15 126 140.7 128.5 139.35');
+    expect(source).toContain('clipPath={isSpeaking && activeIdleAction !== "yawn" ? `url(#${speakingMouthClipId})`');
+    expect(source).toContain('"--cat-mouth-soft-y"');
     expect(source).toContain("microphonePeakRef");
     expect(MICROPHONE_TRIGGER_THRESHOLD).toBeLessThan(.1);
   });
 
   it("uses the source animator's exact tuned speech level", () => {
     expect(ORIGINAL_SPEECH_LEVEL).toBe(.72);
+  });
+
+  it("keeps the source mouth cycle level-aware and isolated from yawn", async () => {
+    const css = await readFile(path.resolve("src/renderer/components/greeny-animal.css"), "utf8");
+    expect(css).toContain('translateY(var(--cat-mouth-soft-y))');
+    expect(css).toContain('scaleY(var(--cat-mouth-lip-open))');
+    expect(css).toContain('[data-speaking="true"]:not([data-idle-action="yawn"]) .morph-mouth-opening');
   });
 });

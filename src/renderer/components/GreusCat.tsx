@@ -580,6 +580,7 @@ export const GreusCat = forwardRef<GreusCatHandle, GreusCatProps>(
     const mouthInnerPathRef = useRef<SVGPathElement>(null);
     const instanceId = useId().replace(/:/g, "");
     const clipId = `cat-body-${instanceId}`;
+    const speakingMouthClipId = `cat-speaking-mouth-${instanceId}`;
     const baseGradientId = `cat-base-gradient-${instanceId}`;
     const handGradientId = `cat-hand-gradient-${instanceId}`;
     const shadeGradientId = `cat-shade-gradient-${instanceId}`;
@@ -991,8 +992,10 @@ export const GreusCat = forwardRef<GreusCatHandle, GreusCatProps>(
       "--cat-breathe-y": "-1px",
       "--cat-body-ratio": ratio,
       "--cat-tail-y": `${(1 - ratio) * 42}px`,
-      "--cat-mouth-mid": .5 + level * .45,
-      "--cat-mouth-open": .64 + level * .62,
+      "--cat-mouth-lip-soft": 1 - level * .38,
+      "--cat-mouth-lip-open": 1 - level * .7,
+      "--cat-mouth-lip-mid": 1 - level * .52,
+      "--cat-mouth-soft-y": `${-16 + level * 6}px`,
       "--cat-mouth-mid-y": `${-16 + level * 10}px`,
       "--cat-mouth-open-y": `${-16 + level * 16}px`,
       "--cat-base": palette.base,
@@ -1043,6 +1046,10 @@ export const GreusCat = forwardRef<GreusCatHandle, GreusCatProps>(
       >
         <defs>
           <clipPath id={clipId}><path d={BODY} /></clipPath>
+          <clipPath id={speakingMouthClipId}>
+            {/* Follow the original omega lip so the inner mouth can never leak above it. */}
+            <path d="M109 139.35 L111.5 139.35 C114 140.7 117 141.15 120 139.35 C123 141.15 126 140.7 128.5 139.35 L131 139.35 L131 160 L109 160 Z" />
+          </clipPath>
           <linearGradient id={baseGradientId} x1="120" y1="46" x2="120" y2="211" gradientUnits="userSpaceOnUse">
             <stop offset="0" stopColor="var(--cat-base)" />
             <stop offset=".58" stopColor="var(--cat-base)" />
@@ -1220,7 +1227,11 @@ export const GreusCat = forwardRef<GreusCatHandle, GreusCatProps>(
                   </g>
                   <path ref={leftBrowPathRef} className="morph-brow morph-brow-left" d={browPath(initialFace.current.leftBrow)} fill="none" stroke="var(--cat-face)" strokeWidth="2.8" strokeLinecap="round" />
                   <path ref={rightBrowPathRef} className="morph-brow morph-brow-right" d={browPath(initialFace.current.rightBrow)} fill="none" stroke="var(--cat-face)" strokeWidth="2.8" strokeLinecap="round" />
-                  <g className="morph-mouth-clip">
+                  <g
+                    className="morph-mouth-clip"
+                    data-testid="speaking-mouth-clip"
+                    clipPath={isSpeaking && activeIdleAction !== "yawn" ? `url(#${speakingMouthClipId})` : undefined}
+                  >
                     <g className="morph-mouth-opening">
                       <path ref={mouthOuterPathRef} className="morph-mouth-outer" d={cubicPath(initialFace.current.mouthOuter)} fill="var(--cat-face)" />
                       <path ref={mouthInnerPathRef} className="morph-mouth-inner" d={cubicPath(initialFace.current.mouthInner)} fill="var(--cat-ear)" />

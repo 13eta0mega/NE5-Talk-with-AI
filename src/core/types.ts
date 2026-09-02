@@ -71,6 +71,7 @@ export type ProviderEvent =
   | { type: "output-transcript"; text: string }
   | { type: "generation-complete" }
   | { type: "turn-complete" }
+  | { type: "waiting-for-input" }
   | { type: "interrupted" }
   | { type: "resume-handle"; handle: string }
   | { type: "go-away"; timeLeftMs: number }

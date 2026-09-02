@@ -2,7 +2,7 @@ import type { CharacterProfile } from "../../characters/catalog";
 import type { ConversationPhase, EmotionId } from "../../core/types";
 import { GreusCat, type IdleAction } from "./GreusCat";
 
-export const MIN_AUDIBLE_SPEECH_LEVEL = .018;
+export const MIN_AUDIBLE_SPEECH_LEVEL = .012;
 
 export function PetStage({
   profile,
@@ -22,7 +22,9 @@ export function PetStage({
   customColor: string;
   idleAction: IdleAction | "auto";
 }) {
-  const audibleSpeechLevel = phase === "speaking" ? Math.max(0, Math.min(1, mouthLevel)) : 0;
+  const speaking = phase === "speaking";
+  const audibleSpeechLevel = speaking ? Math.max(0, Math.min(1, mouthLevel)) : 0;
+
   return (
     <GreusCat
       coat={profile.coat}
@@ -35,8 +37,8 @@ export function PetStage({
       easing="ease-in-out"
       durationMs={780}
       idleAnchor="bottom-center"
-      isSpeaking={phase === "speaking" && audibleSpeechLevel >= MIN_AUDIBLE_SPEECH_LEVEL}
-      speechLevel={audibleSpeechLevel}
+      isSpeaking={speaking}
+      speechLevel={audibleSpeechLevel >= MIN_AUDIBLE_SPEECH_LEVEL ? audibleSpeechLevel : 0}
       microphoneActive={phase === "listening"}
       microphoneLevel={inputLevel}
       idleAction={idleAction === "auto" ? undefined : idleAction}

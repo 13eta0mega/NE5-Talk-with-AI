@@ -41,7 +41,8 @@ describe("emotion sync and listening lip sync", () => {
     expect(adapter).toContain("this.emitInferredExpression(inputText)");
     expect(adapter).toContain("this.emitInferredExpression(outputText)");
     expect(adapter).toContain("this.emitInferredExpression(text)");
-    expect(adapter).toContain("Native tool output remains authoritative");
+    expect(adapter).toContain('if (call.name === "set_pet_expression")');
+    expect(adapter).toContain('this.emit({ type: "expression", emotion, intensity, gesture })');
   });
 
   it("never lip-syncs in listening mode and falls back to idle motion if speech starts from listening", async () => {

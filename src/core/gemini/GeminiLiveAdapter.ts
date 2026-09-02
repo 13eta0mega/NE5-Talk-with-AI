@@ -1,5 +1,5 @@
 import { GoogleGenAI, Modality } from "@google/genai";
-import { EMOTION_IDS, type EmotionId, type GestureId, type ProviderEvent } from "../types";
+import { EMOTION_IDS, normalizeEmotionId, type GestureId, type ProviderEvent } from "../types";
 import { int16ToBase64 } from "../audio/pcm";
 
 type Subscriber = (event: ProviderEvent) => void;
@@ -61,6 +61,7 @@ export class GeminiLiveAdapter {
       model: credentials.model,
       config: {
         responseModalities: [Modality.AUDIO],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         contextWindowCompression: { slidingWindow: {} },
@@ -96,6 +97,11 @@ export class GeminiLiveAdapter {
     });
   }
 
+  sendText(text: string): void {
+    if (!this.ready) throw new Error("Live 연결이 아직 준비되지 않았습니다.");
+    this.session?.sendRealtimeInput({ text });
+  }
+
   endInputAudio(): void {
     this.session?.sendRealtimeInput({ audioStreamEnd: true });
   }
@@ -109,10 +115,12 @@ export class GeminiLiveAdapter {
 
   private handleMessage(message: Record<string, any>, characterId: string, voiceName: string, modelId: string): void {
     const serverContent = message.serverContent;
-    const encodedAudio = typeof message.data === "string"
-      ? message.data
-      : serverContent?.modelTurn?.parts?.find((part: any) => part.inlineData?.data)?.inlineData?.data;
-    if (encodedAudio) {
+    const encodedAudioParts: string[] = typeof message.data === "string"
+      ? [message.data]
+      : (serverContent?.modelTurn?.parts ?? [])
+        .map((part: any) => part.inlineData?.data)
+        .filter((data: unknown): data is string => typeof data === "string");
+    for (const encodedAudio of encodedAudioParts) {
       const binary = atob(encodedAudio);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
@@ -148,7 +156,7 @@ export class GeminiLiveAdapter {
     if (calls.length) {
       const responses = calls.map((call: any) => {
         if (call.name === "set_pet_expression") {
-          const emotion = EMOTION_IDS.includes(call.args?.emotion) ? call.args.emotion as EmotionId : "neutral";
+          const emotion = normalizeEmotionId(call.args?.emotion);
           const intensity = Math.max(0, Math.min(1, Number(call.args?.intensity ?? 0.7)));
           const gesture = GESTURES.has(call.args?.gesture) ? call.args.gesture as GestureId : undefined;
           this.emit({ type: "expression", emotion, intensity, gesture });

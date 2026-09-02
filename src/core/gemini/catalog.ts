@@ -11,5 +11,6 @@ export const VOICE_CATALOG = [
   ["Sadachbia", "생기 있고 활발함"], ["Sadaltager", "지적이고 박식함"], ["Sulafat", "따뜻하고 포근함"],
 ] as const;
 
-export const DEFAULT_VOICE_NAME = "Kore";
+export const DEFAULT_VOICE_NAME = "Leda";
+export const CHARACTER_VOICE_PROFILE_VERSION = 2;
 export const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";

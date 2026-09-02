@@ -1,5 +1,6 @@
 import { AudioEngine } from "../audio/AudioEngine";
 import { GeminiLiveAdapter } from "../gemini/GeminiLiveAdapter";
+import { DEFAULT_VOICE_NAME } from "../gemini/catalog";
 import { nextPhase } from "../session/sessionMachine";
 import type { ConversationPhase, EmotionId, ProviderEvent } from "../types";
 import { mergeStreamingTranscript } from "./transcript";
@@ -25,20 +26,21 @@ export class ConversationCoordinator {
   };
   private listeners = new Set<(value: ConversationSnapshot) => void>();
   private expressionListener?: (emotion: EmotionId, intensity: number) => void;
-  private characterId = "pet-rabbit-pink";
-  private voiceName = "Kore";
+  private characterId = "greus-greeny";
+  private voiceName = DEFAULT_VOICE_NAME;
   private modelId = "gemini-3.1-flash-live-preview";
   private generationComplete = false;
   private audioSequence = 0;
   private reconnecting = false;
   private desiredListening = false;
   private microphoneDeviceId = "default";
-  private lastEmotion: EmotionId = "neutral";
+  private lastEmotion: EmotionId = "idle";
   private lastEmotionIntensity = 1;
   private disposed = false;
   private inputTranscriptOpen = false;
   private outputTranscriptOpen = false;
   private reconnectTimer?: number;
+  private capturePauseForPlayback?: Promise<void>;
 
   constructor() {
     this.provider.onEvent((event) => void this.handleProviderEvent(event));
@@ -55,6 +57,17 @@ export class ConversationCoordinator {
     this.expressionListener = listener;
   }
 
+  resetExpression(): void {
+    this.lastEmotion = "idle";
+    this.lastEmotionIntensity = 1;
+    this.expressionListener?.("idle", 1);
+  }
+
+  async changeMicrophoneDevice(deviceId: string): Promise<void> {
+    this.microphoneDeviceId = deviceId;
+    if (this.desiredListening) await this.audio.startCapture(deviceId);
+  }
+
   private update(patch: Partial<ConversationSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch };
     this.listeners.forEach((listener) => listener(this.snapshot));
@@ -62,6 +75,23 @@ export class ConversationCoordinator {
 
   private transition(event: Parameters<typeof nextPhase>[1]): void {
     this.update({ phase: nextPhase(this.snapshot.phase, event) });
+  }
+
+  private async enterPlaybackMode(): Promise<void> {
+    if (!this.capturePauseForPlayback) {
+      this.audio.gate.close();
+      this.capturePauseForPlayback = this.audio.pauseCaptureForPlayback();
+    }
+    await this.capturePauseForPlayback;
+  }
+
+  private async restoreListeningCapture(): Promise<void> {
+    try {
+      if (this.capturePauseForPlayback) await this.capturePauseForPlayback;
+      if (this.desiredListening) await this.audio.startCapture(this.microphoneDeviceId);
+    } finally {
+      this.capturePauseForPlayback = undefined;
+    }
   }
 
   async connect(characterId: string, voiceName: string, modelId: string): Promise<void> {
@@ -87,6 +117,7 @@ export class ConversationCoordinator {
     }
     this.desiredListening = true;
     this.microphoneDeviceId = deviceId;
+    this.capturePauseForPlayback = undefined;
     await this.audio.startCapture(deviceId);
     this.audio.gate.setSpeaking(false);
     this.audio.gate.open();
@@ -99,6 +130,32 @@ export class ConversationCoordinator {
     this.provider.endInputAudio();
     void this.audio.stopCapture();
     this.transition("USER_SPEECH_END");
+  }
+
+  async sendText(text: string): Promise<void> {
+    const value = text.trim();
+    if (!value) return;
+    if (this.snapshot.phase === "disconnected" || this.snapshot.phase === "error") {
+      throw new Error("먼저 Live 연결을 시작해 주세요.");
+    }
+    if (this.snapshot.phase === "connecting" || this.snapshot.phase === "reconnecting") {
+      throw new Error("Live 연결이 완료된 뒤 메시지를 보내 주세요.");
+    }
+
+    this.audioSequence += 1;
+    this.generationComplete = false;
+    this.audio.gate.close();
+    this.audio.gate.setSpeaking(false);
+    this.audio.flushPlayback();
+    if (this.desiredListening) {
+      this.provider.endInputAudio();
+      await this.audio.stopCapture();
+    }
+    this.capturePauseForPlayback = undefined;
+    this.inputTranscriptOpen = true;
+    this.outputTranscriptOpen = false;
+    this.update({ phase: "thinking", inputTranscript: value, outputTranscript: "", error: undefined });
+    this.provider.sendText(value);
   }
 
   async changeVoice(voiceName: string): Promise<void> {
@@ -122,9 +179,10 @@ export class ConversationCoordinator {
     this.audio.gate.close();
     this.audio.flushPlayback();
     this.desiredListening = false;
-    this.lastEmotion = "neutral";
+    this.lastEmotion = "idle";
     this.lastEmotionIntensity = 1;
     await this.audio.stopCapture();
+    this.capturePauseForPlayback = undefined;
     await this.provider.close();
     this.update({ phase: "disconnected", inputTranscript: "", outputTranscript: "", resumed: false });
   }
@@ -164,6 +222,25 @@ export class ConversationCoordinator {
     }, delayMs);
   }
 
+  private async commitPlaybackAndFinish(sequence: number): Promise<void> {
+    try {
+      await this.audio.commitBufferedPlayback();
+      void this.finishSpeakingWhenDrained(sequence);
+    } catch (error) {
+      this.audio.flushPlayback();
+      this.audio.gate.setSpeaking(false);
+      this.update({ error: error instanceof Error ? error.message : "오디오 재생에 실패했습니다." });
+      if (this.desiredListening) {
+        await this.restoreListeningCapture();
+        this.audio.gate.open();
+        this.update({ phase: "listening" });
+      } else {
+        this.capturePauseForPlayback = undefined;
+        this.update({ phase: "idle" });
+      }
+    }
+  }
+
   private async handleProviderEvent(event: ProviderEvent): Promise<void> {
     switch (event.type) {
       case "connected":
@@ -173,7 +250,7 @@ export class ConversationCoordinator {
           error: undefined,
         });
         if (this.desiredListening) {
-          await this.audio.startCapture(this.microphoneDeviceId);
+          await this.restoreListeningCapture();
           this.audio.gate.setSpeaking(false);
           this.audio.gate.open();
         }
@@ -184,15 +261,14 @@ export class ConversationCoordinator {
         this.generationComplete = false;
         this.audio.gate.setSpeaking(true);
         if (this.snapshot.phase !== "speaking") this.transition("MODEL_AUDIO_START");
+        await this.enterPlaybackMode();
         await this.audio.enqueuePcm24k(event.pcm);
         break;
       case "generation-complete":
       case "turn-complete":
         this.generationComplete = true;
-        if (event.type === "turn-complete") {
-          this.inputTranscriptOpen = false;
-        }
-        void this.finishSpeakingWhenDrained(this.audioSequence);
+        if (event.type === "turn-complete") this.inputTranscriptOpen = false;
+        await this.commitPlaybackAndFinish(this.audioSequence);
         break;
       case "interrupted":
         this.audioSequence += 1;
@@ -200,9 +276,10 @@ export class ConversationCoordinator {
         this.audio.flushPlayback();
         this.audio.gate.setSpeaking(false);
         if (this.desiredListening) {
+          await this.restoreListeningCapture();
           this.audio.gate.open();
           this.update({ phase: "listening" });
-        }
+        } else this.capturePauseForPlayback = undefined;
         break;
       case "input-transcript": {
         const previous = this.inputTranscriptOpen ? this.snapshot.inputTranscript : "";
@@ -237,9 +314,11 @@ export class ConversationCoordinator {
     if (!this.generationComplete || sequence !== this.audioSequence) return;
     this.audio.gate.setSpeaking(false);
     if (this.desiredListening) {
+      await this.restoreListeningCapture();
       this.audio.gate.open();
       this.transition("PLAYBACK_DRAINED");
     } else {
+      this.capturePauseForPlayback = undefined;
       this.update({ phase: "idle" });
     }
   }
@@ -255,5 +334,6 @@ export class ConversationCoordinator {
     this.audio.gate.close();
     await this.provider.close();
     await this.audio.dispose();
+    this.capturePauseForPlayback = undefined;
   }
 }

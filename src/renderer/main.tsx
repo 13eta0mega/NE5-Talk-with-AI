@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { installMobileBridge } from "../mobile/installMobileBridge";
 import "./styles.css";
+import "./chat.css";
 
 const nativeDesktopBridge = Boolean(window.deskPet);
 installMobileBridge();

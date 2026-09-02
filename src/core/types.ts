@@ -1,6 +1,8 @@
 export const EMOTION_IDS = [
-  "neutral", "happy", "joyful", "excited", "affectionate", "proud", "curious", "surprised",
-  "shy", "sleepy", "sad", "lonely", "worried", "afraid", "angry", "confused",
+  "idle", "listening", "happy", "sleepy", "curious", "alert", "playful", "excited",
+  "affectionate", "relaxed", "startled", "anxious", "annoyed", "angry", "sad", "scared",
+  "laughing", "love", "wink", "proud", "smug", "thinking", "confused", "disappointed",
+  "tired", "crying",
 ] as const;
 
 export type EmotionId = (typeof EMOTION_IDS)[number];
@@ -20,34 +22,15 @@ export interface PetExpressionState {
   gesture?: GestureId;
 }
 
-export interface CharacterRigState {
-  headX: number;
-  headY: number;
-  headRotate: number;
-  headScaleX: number;
-  headScaleY: number;
-  bodyY: number;
-  bodyRotate: number;
-  bodyScaleY: number;
-  eyeOpenL: number;
-  eyeOpenR: number;
-  eyeScaleX: number;
-  eyeY: number;
-  browTiltL: number;
-  browTiltR: number;
-  browY: number;
-  mouthOpen: number;
-  mouthSmile: number;
-  mouthWidth: number;
-  mouthRound: number;
-  cheekOpacity: number;
-  armLiftL: number;
-  armLiftR: number;
-  armRotateL: number;
-  armRotateR: number;
-  bounce: number;
-  sway: number;
-  squash: number;
+const LEGACY_EMOTION_ALIASES: Record<string, EmotionId> = {
+  neutral: "idle", joyful: "laughing", surprised: "startled", shy: "wink",
+  lonely: "sad", worried: "anxious", afraid: "scared",
+};
+
+export function normalizeEmotionId(value: unknown): EmotionId {
+  if (typeof value !== "string") return "idle";
+  if ((EMOTION_IDS as readonly string[]).includes(value)) return value as EmotionId;
+  return LEGACY_EMOTION_ALIASES[value] ?? "idle";
 }
 
 export interface LogicalSessionPublic {

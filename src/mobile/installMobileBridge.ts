@@ -1,8 +1,9 @@
 import type { LogicalSessionPublic, SecureSettingsPublic } from "../core/types";
-import { DEFAULT_LIVE_MODEL, DEFAULT_VOICE_NAME } from "../core/gemini/catalog";
+import { CHARACTER_VOICE_PROFILE_VERSION, DEFAULT_LIVE_MODEL, DEFAULT_VOICE_NAME } from "../core/gemini/catalog";
 
 const SETTINGS_KEY = "deskpet:mobile-settings:v1";
 const SESSION_PREFIX = "deskpet:mobile-session:v1:";
+const VOICE_PROFILE_VERSION_KEY = "deskpet:voice-profile-version";
 
 type StoredSettings = Pick<SecureSettingsPublic,
   "selectedVoiceName" | "selectedModelId" | "selectedCharacterId" |
@@ -19,7 +20,7 @@ type StoredSession = LogicalSessionPublic & {
 const defaultSettings: StoredSettings = {
   selectedVoiceName: DEFAULT_VOICE_NAME,
   selectedModelId: DEFAULT_LIVE_MODEL,
-  selectedCharacterId: "pet-rabbit-pink",
+  selectedCharacterId: "greus-greeny",
   microphoneId: "default",
   speakerId: "default",
   transcriptEnabled: true,
@@ -38,12 +39,27 @@ function writeJson(key: string, value: unknown): void {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+export function readStoredSettings(): StoredSettings {
+  const settings = readJson(SETTINGS_KEY, defaultSettings);
+  const profileVersion = Number(localStorage.getItem(VOICE_PROFILE_VERSION_KEY) ?? "1");
+  if (profileVersion < CHARACTER_VOICE_PROFILE_VERSION && settings.selectedVoiceName === "Kore") {
+    const migrated = { ...settings, selectedVoiceName: DEFAULT_VOICE_NAME };
+    writeJson(SETTINGS_KEY, migrated);
+    localStorage.setItem(VOICE_PROFILE_VERSION_KEY, String(CHARACTER_VOICE_PROFILE_VERSION));
+    return migrated;
+  }
+  if (profileVersion < CHARACTER_VOICE_PROFILE_VERSION) {
+    localStorage.setItem(VOICE_PROFILE_VERSION_KEY, String(CHARACTER_VOICE_PROFILE_VERSION));
+  }
+  return settings;
+}
+
 function sessionKey(characterId: string): string {
   return `${SESSION_PREFIX}${characterId}`;
 }
 
 function getStoredSession(characterId: string): StoredSession {
-  const settings = readJson(SETTINGS_KEY, defaultSettings);
+  const settings = readStoredSettings();
   return readJson<StoredSession>(sessionKey(characterId), {
     characterId,
     logicalSessionId: crypto.randomUUID(),
@@ -91,7 +107,7 @@ export function installMobileBridge(): void {
     },
     settings: {
       async get() {
-        const local = readJson(SETTINGS_KEY, defaultSettings);
+        const local = readStoredSettings();
         const status = await apiRequest<{ hasApiKey: boolean }>("./api/mobile-status").catch(() => ({ hasApiKey: false }));
         return {
           hasApiKey: status.hasApiKey,
@@ -108,7 +124,7 @@ export function installMobileBridge(): void {
         throw new Error("모바일 API 키는 호스팅 서버에서만 변경할 수 있습니다.");
       },
       async savePreferences(patch) {
-        const current = readJson(SETTINGS_KEY, defaultSettings);
+        const current = readStoredSettings();
         writeJson(SETTINGS_KEY, { ...current, ...patch });
         return { ok: true };
       },

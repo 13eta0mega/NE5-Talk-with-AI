@@ -1,6 +1,7 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { EMOTION_IDS, normalizeEmotionId, type GestureId, type ProviderEvent } from "../types";
 import { int16ToBase64 } from "../audio/pcm";
+import { inferEmotionFromText } from "../emotion";
 import { isGemini25LiveModel, normalizeLiveModelId } from "./catalog";
 
 type Subscriber = (event: ProviderEvent) => void;
@@ -81,6 +82,12 @@ export class GeminiLiveAdapter {
 
   private emit(event: ProviderEvent): void {
     this.subscriber?.(event);
+  }
+
+  private emitInferredExpression(text: string): void {
+    const inferred = inferEmotionFromText(text);
+    if (!inferred) return;
+    this.emit({ type: "expression", emotion: inferred.emotion, intensity: inferred.intensity });
   }
 
   async connect(characterId: string, voiceName: string, modelId: string): Promise<void> {
@@ -171,6 +178,7 @@ export class GeminiLiveAdapter {
 
   sendText(text: string): void {
     if (!this.isReady) throw new Error("Live 연결이 아직 준비되지 않았습니다.");
+    this.emitInferredExpression(text);
     this.session?.sendClientContent({ turns: text, turnComplete: true });
   }
 
@@ -202,8 +210,14 @@ export class GeminiLiveAdapter {
 
     const inputText = serverContent?.inputTranscription?.text;
     const outputText = serverContent?.outputTranscription?.text;
-    if (inputText) this.emit({ type: "input-transcript", text: inputText });
-    if (outputText) this.emit({ type: "output-transcript", text: outputText });
+    if (inputText) {
+      this.emit({ type: "input-transcript", text: inputText });
+      this.emitInferredExpression(inputText);
+    }
+    if (outputText) {
+      this.emit({ type: "output-transcript", text: outputText });
+      this.emitInferredExpression(outputText);
+    }
     if (serverContent?.waitingForInput) this.emit({ type: "waiting-for-input" });
     if (serverContent?.generationComplete) this.emit({ type: "generation-complete" });
     if (serverContent?.turnComplete) this.emit({ type: "turn-complete" });
@@ -233,6 +247,8 @@ export class GeminiLiveAdapter {
           const emotion = normalizeEmotionId(call.args?.emotion);
           const intensity = Math.max(0, Math.min(1, Number(call.args?.intensity ?? 0.7)));
           const gesture = GESTURES.has(call.args?.gesture) ? call.args.gesture as GestureId : undefined;
+          // Native tool output remains authoritative when 3.1 provides it; the
+          // transcript classifier above is the shared fallback for 2.5 and missed tool calls.
           this.emit({ type: "expression", emotion, intensity, gesture });
         }
         return { id: call.id, name: call.name, response: { result: { acknowledged: true } } };

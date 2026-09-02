@@ -1,0 +1,43 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { buildSystemInstruction } from "../electron/personaVault";
+
+describe("Gemini 2.5 Live stability profile", () => {
+  it("never instructs 2.5 to call an expression tool that is not exposed", () => {
+    const withoutTool = buildSystemInstruction("greus-greeny", undefined, false);
+    const withTool = buildSystemInstruction("greus-greeny", undefined, true);
+    expect(withoutTool).not.toContain("set_pet_expression");
+    expect(withTool).toContain("set_pet_expression");
+  });
+
+  it("keeps ephemeral Live on the documented v1beta route", async () => {
+    const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
+    expect(adapter).toContain("new GoogleGenAI({ apiKey: credentials.token })");
+    expect(adapter).not.toContain('apiVersion: "v1alpha"');
+  });
+
+  it("fails fast when setup never completes or the websocket closes early", async () => {
+    const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
+    expect(adapter).toContain("LIVE_CONNECT_TIMEOUT_MS = 12000");
+    expect(adapter).toContain("Promise.race([connectPromise, earlyFailure, timeout])");
+    expect(adapter).toContain("rejectSetup?.(new Error(message))");
+    expect(adapter).toContain("code?: number");
+  });
+
+  it("keeps compression and session resumption enabled for long 2.5 sessions", async () => {
+    const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
+    const token = await readFile(path.resolve("api/live-token.ts"), "utf8");
+    for (const source of [adapter, token]) {
+      expect(source).toContain("contextWindowCompression: { slidingWindow: {} }");
+      expect(source).toContain("sessionResumption:");
+    }
+  });
+
+  it("uses the same expression-tool availability for token constraints and persona", async () => {
+    const token = await readFile(path.resolve("api/live-token.ts"), "utf8");
+    expect(token).toContain("const expressionToolAvailable = !isGemini25LiveModel(modelId)");
+    expect(token).toContain("buildSystemInstruction(body.characterId, memorySummary, expressionToolAvailable)");
+    expect(token).toContain("if (expressionToolAvailable) constrainedConfig.tools = [expressionTool()]");
+  });
+});

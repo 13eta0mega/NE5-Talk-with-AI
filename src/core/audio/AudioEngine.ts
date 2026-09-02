@@ -16,6 +16,7 @@ type OutputMediaDevices = MediaDevices & {
 };
 type SinkAudioContext = AudioContext & { setSinkId?: (sinkId: string) => Promise<void> };
 
+export const ANDROID_AUDIO_MODE_SETTLE_MS = 180;
 export const toBrowserSinkId = (deviceId: string): string => deviceId === "default" ? "" : deviceId;
 
 export class AudioEngine {
@@ -57,6 +58,23 @@ export class AudioEngine {
     }
   }
 
+  private get needsAndroidAudioModeReset(): boolean {
+    return /Android/i.test(navigator.userAgent);
+  }
+
+  private async waitForAndroidAudioModeReset(): Promise<void> {
+    if (!this.needsAndroidAudioModeReset) return;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, ANDROID_AUDIO_MODE_SETTLE_MS));
+  }
+
+  private async closePlaybackContext(): Promise<void> {
+    this.flushPlayback();
+    this.playbackNode?.disconnect();
+    if (this.playbackContext && this.playbackContext.state !== "closed") await this.playbackContext.close();
+    this.playbackNode = undefined;
+    this.playbackContext = undefined;
+  }
+
   async listDevices(requestPermission = false): Promise<DeviceSnapshot> {
     if (!navigator.mediaDevices?.enumerateDevices || !navigator.mediaDevices?.getUserMedia) {
       throw new Error("이 브라우저에서는 마이크 장치 API를 사용할 수 없습니다. HTTPS 주소에서 열어 주세요.");
@@ -78,6 +96,10 @@ export class AudioEngine {
       return;
     }
     await this.stopCapture();
+    // Do not keep a playback AudioContext alive while Android enters microphone/
+    // communication mode. Reusing that context on the next answer can leave
+    // volume keys attached to the call stream instead of the media stream.
+    await this.closePlaybackContext();
     this.setAudioSessionType("auto");
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -122,7 +144,12 @@ export class AudioEngine {
 
   async pauseCaptureForPlayback(): Promise<void> {
     await this.stopCapture();
+    // A playback context that survived getUserMedia may remain associated with
+    // Android's communication audio mode. Tear it down before requesting the
+    // playback session and recreate it only after the OS has released capture.
+    await this.closePlaybackContext();
     this.setAudioSessionType("playback");
+    await this.waitForAndroidAudioModeReset();
     await this.preparePlayback();
   }
 
@@ -131,7 +158,9 @@ export class AudioEngine {
       if (deviceId !== this.outputDeviceId) await this.setOutputDevice(deviceId);
       return;
     }
-    const context = new AudioContext({ latencyHint: "interactive" });
+    // "playback" favors ordinary media rendering instead of low-latency
+    // interactive/communications output on mobile browsers.
+    const context = new AudioContext({ latencyHint: "playback" });
     await context.audioWorklet.addModule(new URL("./worklets/playback-processor.js", window.location.href).href);
     const node = new AudioWorkletNode(context, "deskpet-playback", { outputChannelCount: [1] });
     node.port.onmessage = (event: MessageEvent<{ type: string; level?: number; consumed?: number }>) => {
@@ -200,9 +229,7 @@ export class AudioEngine {
 
   async dispose(): Promise<void> {
     await this.stopCapture();
-    this.flushPlayback();
-    this.playbackNode?.disconnect();
-    if (this.playbackContext && this.playbackContext.state !== "closed") await this.playbackContext.close();
+    await this.closePlaybackContext();
     this.setAudioSessionType("auto");
   }
 }

@@ -13,6 +13,7 @@ const GESTURES = new Set<GestureId>([
 const KOREAN_LANGUAGE_CODE = "ko-KR";
 const LIVE_CONNECT_TIMEOUT_MS = 12000;
 const REALTIME_INPUT_CONFIG = {
+  activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
     disabled: false,
     startOfSpeechSensitivity: "START_SENSITIVITY_LOW",

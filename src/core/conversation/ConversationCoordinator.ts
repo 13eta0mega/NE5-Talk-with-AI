@@ -224,8 +224,14 @@ export class ConversationCoordinator {
 
   private async settleWaitingForInput(): Promise<void> {
     this.clearThinkingResponseTimer();
+    if (!this.audio.queueEmpty || this.snapshot.phase === "speaking") {
+      // waitingForInput means Gemini wants more user input; it is not an interruption.
+      // Preserve any audio already delivered by the model and drain it before reopening capture.
+      this.generationComplete = true;
+      await this.commitPlaybackAndFinish(this.audioSequence);
+      return;
+    }
     this.generationComplete = false;
-    this.audio.flushPlayback();
     this.audio.gate.setSpeaking(false);
     if (this.desiredListening) {
       await this.restoreListeningCapture();

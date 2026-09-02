@@ -59,7 +59,10 @@ export class GeminiLiveAdapter {
     this.ready = false;
     this.session = undefined;
     const credentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId });
-    const ai = new GoogleGenAI({ apiKey: credentials.token, httpOptions: { apiVersion: "v1alpha" } });
+
+    // Do not pin v1alpha. The current Gemini API and GenAI SDK default to
+    // v1beta, where Live API and ephemeral auth_tokens are exposed.
+    const ai = new GoogleGenAI({ apiKey: credentials.token });
 
     const session = await ai.live.connect({
       model: credentials.model,

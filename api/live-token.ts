@@ -1,6 +1,6 @@
 import {
   buildSystemInstruction, createClient, expressionTool, isCharacterId, isModelId, isTrustedBrowserRequest, isVoiceName,
-  noStore, parseBody, type ApiRequest, type ApiResponse,
+  noStore, normalizeClientApiKey, parseBody, type ApiRequest, type ApiResponse,
 } from "./_shared.js";
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
@@ -20,6 +20,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       return;
     }
     const modelId = body.modelId.replace(/^models\//, "");
+    const clientApiKey = normalizeClientApiKey(body.apiKey);
     const resumeHandle = typeof body.resumeHandle === "string"
       && body.resumeHandle.length <= 8192
       && body.resumeVoiceName === body.voiceName
@@ -29,7 +30,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       : undefined;
     const memorySummary = typeof body.memorySummary === "string" ? body.memorySummary.slice(0, 1600) : undefined;
     const now = Date.now();
-    const client = await createClient();
+    const client = await createClient(clientApiKey);
     const constrainedConfig = {
       responseModalities: ["AUDIO"],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: body.voiceName } } },
@@ -56,4 +57,3 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     response.status(500).json({ error: error instanceof Error ? error.message : "Live 토큰을 만들지 못했습니다." });
   }
 }
-

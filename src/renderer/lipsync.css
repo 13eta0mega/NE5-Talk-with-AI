@@ -1,0 +1,28 @@
+/* Real PCM-driven lip sync.
+ * GreusCat already exposes speechLevel as CSS variables. During model playback,
+ * map those variables directly to the mouth rig instead of running a fake loop.
+ */
+.greus-cat[data-speaking="true"]:not([data-idle-action="yawn"]) .morph-mouth-opening {
+  animation: none !important;
+  transform: translateY(var(--cat-mouth-open-y));
+  transition: transform 32ms linear;
+  will-change: transform;
+}
+
+.greus-cat[data-speaking="true"]:not([data-idle-action="yawn"]) .morph-mouth-line {
+  animation: none !important;
+  transform: scaleY(var(--cat-mouth-lip-open));
+  transition: transform 32ms linear, stroke-width 70ms linear, stroke 120ms ease;
+  will-change: transform;
+}
+
+/* PCM silence should visibly close the mouth even while the playback session is
+ * still marked speaking. This preserves stable face state without 780ms remorphs.
+ */
+.greus-cat[data-speaking="true"][data-speech-level="0.00"]:not([data-idle-action="yawn"]) .morph-mouth-opening {
+  transform: translateY(-16px);
+}
+
+.greus-cat[data-speaking="true"][data-speech-level="0.00"]:not([data-idle-action="yawn"]) .morph-mouth-line {
+  transform: scaleY(1);
+}

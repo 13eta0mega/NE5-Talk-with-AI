@@ -17,7 +17,10 @@ export function nextPhase(current: ConversationPhase, event: SessionEvent): Conv
       if (event === "USER_SPEECH_END") return "thinking";
       if (event === "MODEL_AUDIO_START") return "speaking";
       return current;
-    case "thinking": return event === "MODEL_AUDIO_START" ? "speaking" : current;
+    case "thinking":
+      if (event === "MODEL_AUDIO_START") return "speaking";
+      if (event === "PLAYBACK_DRAINED") return "listening";
+      return current;
     case "speaking": return event === "PLAYBACK_DRAINED" ? "listening" : current;
     case "reconnecting": return event === "RECONNECTED" ? "idle" : current;
     case "error": return event === "RETRY" ? "connecting" : current;

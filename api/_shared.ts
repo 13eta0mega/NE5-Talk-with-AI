@@ -85,7 +85,7 @@ export function expressionTool() {
 }
 
 export async function createClient(): Promise<GoogleGenAI> {
-  return new GoogleGenAI({ apiKey: requireApiKey() });
+  return new GoogleGenAI({ apiKey: requireApiKey(), httpOptions: { apiVersion: "v1alpha" } });
 }
 
 export { buildSystemInstruction };

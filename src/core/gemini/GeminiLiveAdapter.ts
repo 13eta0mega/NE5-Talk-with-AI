@@ -32,12 +32,15 @@ function expressionTool() {
 export class GeminiLiveAdapter {
   private session?: {
     sendRealtimeInput(params: unknown): void;
+    sendClientContent(params: unknown): void;
     sendToolResponse(params: unknown): void;
     close(): void;
   };
   private subscriber?: Subscriber;
   private connectionEpoch = 0;
   private ready = false;
+
+  get isReady(): boolean { return this.ready && Boolean(this.session); }
 
   onEvent(callback: Subscriber): () => void {
     this.subscriber = callback;
@@ -54,8 +57,9 @@ export class GeminiLiveAdapter {
     if (!window.deskPet) throw new Error("Live 모드는 Electron 앱에서 실행해야 합니다.");
     const epoch = ++this.connectionEpoch;
     this.ready = false;
+    this.session = undefined;
     const credentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId });
-    const ai = new GoogleGenAI({ apiKey: credentials.token, httpOptions: { apiVersion: "v1beta" } });
+    const ai = new GoogleGenAI({ apiKey: credentials.token, httpOptions: { apiVersion: "v1alpha" } });
 
     const session = await ai.live.connect({
       model: credentials.model,
@@ -70,39 +74,49 @@ export class GeminiLiveAdapter {
       } as never,
       callbacks: {
         onopen: () => {
-          if (epoch !== this.connectionEpoch) return;
-          this.ready = true;
-          this.emit({ type: "connected", resumed: credentials.hasResumeState });
+          // @google/genai resolves live.connect only after the server sends setupComplete.
+          // Do not mark the session ready at raw WebSocket open time.
         },
         onmessage: (message: unknown) => {
           if (epoch === this.connectionEpoch) this.handleMessage(message as Record<string, any>, characterId, voiceName, modelId);
         },
         onerror: (error: { message?: string }) => {
-          if (epoch === this.connectionEpoch) this.emit({ type: "error", message: error.message ?? "Live 연결 오류" });
+          if (epoch !== this.connectionEpoch) return;
+          this.ready = false;
+          this.emit({ type: "error", message: error.message ?? "Live 연결 오류" });
         },
         onclose: (event: { reason?: string }) => {
           if (epoch !== this.connectionEpoch) return;
           this.ready = false;
+          this.session = undefined;
           this.emit({ type: "closed", reason: event.reason });
         },
       },
     });
+
+    if (epoch !== this.connectionEpoch) {
+      session.close();
+      return;
+    }
     this.session = session as unknown as typeof this.session;
+    this.ready = true;
+    this.emit({ type: "connected", resumed: credentials.hasResumeState });
   }
 
   sendPcm16(chunk: Int16Array): void {
-    if (!this.ready) return;
+    if (!this.isReady) return;
     this.session?.sendRealtimeInput({
       audio: { data: int16ToBase64(chunk), mimeType: "audio/pcm;rate=16000" },
     });
   }
 
   sendText(text: string): void {
-    if (!this.ready) throw new Error("Live 연결이 아직 준비되지 않았습니다.");
-    this.session?.sendRealtimeInput({ text });
+    if (!this.isReady) throw new Error("Live 연결이 아직 준비되지 않았습니다.");
+    this.session?.sendClientContent({ turns: text, turnComplete: true });
   }
 
   endInputAudio(): void {
+    if (!this.isReady) return;
     this.session?.sendRealtimeInput({ audioStreamEnd: true });
   }
 

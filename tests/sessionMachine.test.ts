@@ -11,6 +11,10 @@ describe("session phase machine", () => {
     expect(nextPhase("speaking", "PLAYBACK_DRAINED")).toBe("listening");
   });
 
+  it("returns from thinking when a turn completes without model audio", () => {
+    expect(nextPhase("thinking", "PLAYBACK_DRAINED")).toBe("listening");
+  });
+
   it("treats reconnect as a normal path", () => {
     expect(nextPhase("speaking", "RECONNECT")).toBe("reconnecting");
     expect(nextPhase("reconnecting", "RECONNECTED")).toBe("idle");

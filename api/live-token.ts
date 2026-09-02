@@ -3,6 +3,17 @@ import {
   noStore, normalizeClientApiKey, parseBody, type ApiRequest, type ApiResponse,
 } from "./_shared.js";
 
+const KOREAN_LANGUAGE_CODE = "ko-KR";
+const REALTIME_INPUT_CONFIG = {
+  automaticActivityDetection: {
+    disabled: false,
+    startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+    endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+    prefixPaddingMs: 250,
+    silenceDurationMs: 650,
+  },
+};
+
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   noStore(response);
   if (request.method !== "POST") {
@@ -33,9 +44,13 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const client = await createClient(clientApiKey);
     const constrainedConfig = {
       responseModalities: ["AUDIO"],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: body.voiceName } } },
-      inputAudioTranscription: {},
-      outputAudioTranscription: {},
+      speechConfig: {
+        languageCode: KOREAN_LANGUAGE_CODE,
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: body.voiceName } },
+      },
+      inputAudioTranscription: { languageCodes: [KOREAN_LANGUAGE_CODE] },
+      outputAudioTranscription: { languageCodes: [KOREAN_LANGUAGE_CODE] },
+      realtimeInputConfig: REALTIME_INPUT_CONFIG,
       contextWindowCompression: { slidingWindow: {} },
       sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
       systemInstruction: { parts: [{ text: buildSystemInstruction(body.characterId, memorySummary) }] },

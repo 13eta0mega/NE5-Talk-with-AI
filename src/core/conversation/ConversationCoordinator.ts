@@ -28,10 +28,16 @@ export interface ConversationSnapshot {
   reconnectCount: number;
 }
 
+export interface ConversationDependencies {
+  audio?: AudioEngine;
+  provider?: GeminiLiveAdapter;
+  micTurnDetector?: MicTurnDetector;
+}
+
 export class ConversationCoordinator {
-  readonly audio = new AudioEngine();
-  readonly provider = new GeminiLiveAdapter();
-  private readonly micTurnDetector = new MicTurnDetector();
+  readonly audio: AudioEngine;
+  readonly provider: GeminiLiveAdapter;
+  private readonly micTurnDetector: MicTurnDetector;
   private snapshot: ConversationSnapshot = { phase: "disconnected", inputTranscript: "", outputTranscript: "", resumed: false, reconnectCount: 0 };
   private listeners = new Set<(value: ConversationSnapshot) => void>();
   private expressionListener?: (emotion: EmotionId, intensity: number) => void;
@@ -58,9 +64,13 @@ export class ConversationCoordinator {
   private micPipelineRecoveries = 0;
   private capturePauseForPlayback?: Promise<void>;
   private completionRepairAttempts = 0;
+  private providerEventQueue: Promise<void> = Promise.resolve();
 
-  constructor() {
-    this.provider.onEvent((event) => void this.handleProviderEvent(event));
+  constructor(dependencies: ConversationDependencies = {}) {
+    this.audio = dependencies.audio ?? new AudioEngine();
+    this.provider = dependencies.provider ?? new GeminiLiveAdapter();
+    this.micTurnDetector = dependencies.micTurnDetector ?? new MicTurnDetector();
+    this.provider.onEvent((event) => this.enqueueProviderEvent(event));
     this.audio.onCapturePcm = (chunk) => {
       this.provider.sendPcm16(chunk);
       const signal = this.micTurnDetector.feed(chunk);
@@ -113,6 +123,30 @@ export class ConversationCoordinator {
   private clearTurnFinalizeTimer(): void { if (this.turnFinalizeTimer !== undefined) window.clearTimeout(this.turnFinalizeTimer); this.turnFinalizeTimer = undefined; }
   private clearMicHealthTimer(): void { if (this.micHealthTimer !== undefined) window.clearTimeout(this.micHealthTimer); this.micHealthTimer = undefined; }
 
+  private enqueueProviderEvent(event: ProviderEvent): void {
+    this.providerEventQueue = this.providerEventQueue
+      .then(() => this.handleProviderEvent(event))
+      .catch((error) => this.recoverFromAudioPipelineFailure(error));
+  }
+
+  private runAudioTask(task: Promise<void>): void {
+    void task.catch((error) => this.recoverFromAudioPipelineFailure(error));
+  }
+
+  private async recoverFromAudioPipelineFailure(error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : "오디오 처리 중 알 수 없는 오류가 발생했습니다.";
+    this.clearThinkingResponseTimer(); this.clearAudioIdleCommitTimer(); this.clearTurnFinalizeTimer(); this.clearMicHealthTimer();
+    this.capturePauseForPlayback = undefined; this.generationComplete = false; this.playbackEpoch += 1;
+    this.audio.flushPlayback(); this.audio.gate.setSpeaking(false);
+    try {
+      await this.reopenListening();
+      this.update({ error: `오디오 파이프라인을 복구했습니다: ${message}` });
+    } catch (recoveryError) {
+      const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : message;
+      this.failRecovery(`오디오 파이프라인 복구 실패: ${recoveryMessage}`);
+    }
+  }
+
   private armMicHealthCheck(): void {
     this.clearMicHealthTimer();
     if (!this.desiredListening || this.snapshot.phase !== "listening") return;
@@ -121,6 +155,7 @@ export class ConversationCoordinator {
       if (this.disposed || !this.desiredListening || this.snapshot.phase !== "listening") return;
       if (this.audio.captureHeartbeatFresh) {
         this.micPipelineRecoveries = 0;
+        this.armMicHealthCheck();
         return;
       }
       if (this.micPipelineRecoveries >= MAX_MIC_PIPELINE_RECOVERIES) {
@@ -138,6 +173,7 @@ export class ConversationCoordinator {
         this.armMicHealthCheck();
       }).catch((error) => {
         this.update({ error: error instanceof Error ? `마이크 자동 복구 실패: ${error.message}` : "마이크 자동 복구에 실패했습니다." });
+        this.armMicHealthCheck();
       });
     }, MIC_HEALTH_CHECK_MS);
   }
@@ -149,7 +185,7 @@ export class ConversationCoordinator {
       this.audioIdleCommitTimer = undefined;
       if (this.disposed || epoch !== this.playbackEpoch || this.snapshot.phase !== "speaking" || this.generationComplete) return;
       this.generationComplete = true;
-      void this.commitPlaybackAndFinish(epoch);
+      this.runAudioTask(this.commitPlaybackAndFinish(epoch));
     }, GEMINI25_AUDIO_IDLE_COMMIT_MS);
   }
 
@@ -158,7 +194,7 @@ export class ConversationCoordinator {
     this.turnFinalizeTimer = window.setTimeout(() => {
       this.turnFinalizeTimer = undefined;
       if (this.disposed || epoch !== this.playbackEpoch || !this.generationComplete) return;
-      void this.finishSpeakingWhenDrained(epoch);
+      this.runAudioTask(this.finishSpeakingWhenDrained(epoch));
     }, TURN_COMPLETE_GRACE_MS);
   }
 
@@ -206,7 +242,15 @@ export class ConversationCoordinator {
       // stale VAD/audio cache across turns.
       this.audio.gate.close();
       this.provider.endInputAudio();
-      this.capturePauseForPlayback = this.audio.pauseCaptureForPlayback();
+      const pause = this.audio.pauseCaptureForPlayback();
+      this.capturePauseForPlayback = pause;
+      try {
+        await pause;
+      } catch (error) {
+        if (this.capturePauseForPlayback === pause) this.capturePauseForPlayback = undefined;
+        throw error;
+      }
+      return;
     }
     await this.capturePauseForPlayback;
   }
@@ -314,11 +358,8 @@ export class ConversationCoordinator {
   }
 
   private async commitPlaybackAndFinish(epoch: number): Promise<void> {
-    try { await this.audio.commitBufferedPlayback(); void this.finishSpeakingWhenDrained(epoch); }
-    catch (error) {
-      this.clearThinkingResponseTimer(); this.clearAudioIdleCommitTimer(); this.clearTurnFinalizeTimer(); this.audio.flushPlayback(); this.audio.gate.setSpeaking(false); this.update({ error: error instanceof Error ? error.message : "오디오 재생에 실패했습니다." });
-      await this.reopenListening();
-    }
+    await this.audio.commitBufferedPlayback();
+    this.runAudioTask(this.finishSpeakingWhenDrained(epoch));
   }
 
   private async settleWaitingForInput(): Promise<void> {

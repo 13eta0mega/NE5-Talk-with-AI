@@ -23,6 +23,7 @@ export const ANDROID_AUDIO_MODE_SETTLE_MS = 260;
 export const PLAYBACK_SAMPLE_RATE = 24000;
 export const AUDIO_WORKLET_VERSION = "20260903-1";
 export const CAPTURE_HEARTBEAT_FRESH_MS = 700;
+export const PLAYBACK_DRAIN_TIMEOUT_MS = 30000;
 export const toBrowserSinkId = (deviceId: string): string => deviceId === "default" ? "" : deviceId;
 
 function versionedWorkletUrl(fileName: string): string {
@@ -298,9 +299,21 @@ export class AudioEngine {
     this.playbackNode?.port.postMessage({ type: "commit" });
   }
 
-  async waitForDrain(tailGuardMs = 80): Promise<void> {
+  async waitForDrain(tailGuardMs = 80, timeoutMs = PLAYBACK_DRAIN_TIMEOUT_MS): Promise<void> {
     if (!this.playbackEnded) {
-      await new Promise<void>((resolve) => this.drainWaiters.push(resolve));
+      await new Promise<void>((resolve, reject) => {
+        let timeoutId: number | undefined;
+        const onDrain = () => {
+          if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+          resolve();
+        };
+        this.drainWaiters.push(onDrain);
+        timeoutId = window.setTimeout(() => {
+          const index = this.drainWaiters.indexOf(onDrain);
+          if (index >= 0) this.drainWaiters.splice(index, 1);
+          reject(new Error("오디오 재생 종료 신호가 지연되어 재생 파이프라인을 초기화합니다."));
+        }, timeoutMs);
+      });
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, tailGuardMs));
   }

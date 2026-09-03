@@ -1,6 +1,11 @@
+export const LIVE_MAX_COMPLETION_REPAIRS = 1;
+export const LIVE_INLINE_COMPLETION_REPAIRS = 2;
 export const GEMINI25_AUDIO_IDLE_COMMIT_MS = 2600;
-export const GEMINI25_MAX_COMPLETION_REPAIRS = 1;
-export const GEMINI25_INLINE_COMPLETION_REPAIRS = 2;
+
+// Backward-compatible aliases for existing diagnostics/tests while recovery is now
+// shared by conversational Live models rather than being limited to Gemini 2.5.
+export const GEMINI25_MAX_COMPLETION_REPAIRS = LIVE_MAX_COMPLETION_REPAIRS;
+export const GEMINI25_INLINE_COMPLETION_REPAIRS = LIVE_INLINE_COMPLETION_REPAIRS;
 
 const INCOMPLETE_CONNECTIVE = /(?:고|서|는데|지만|니까|면|면서|다가|거나|든지|때문에|그리고|그래서|하지만|또는|하는|되는|있는|없는|같은|위한|위해)$/;
 const DANGLING_PARTICLE = /(?:은|는|이|가|을|를|에|의|와|과|도|만|부터|까지|로|으로)$/;

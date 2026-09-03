@@ -2,10 +2,10 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { EMOTION_IDS, normalizeEmotionId, type EmotionId, type GestureId, type ProviderEvent } from "../types";
 import { int16ToBase64 } from "../audio/pcm";
 import { inferEmotionFromText } from "../emotion";
-import { completionRepairPrompt, GEMINI25_INLINE_COMPLETION_REPAIRS, looksLikePrematureCutoff } from "../conversation/responseCompletion";
+import { completionRepairPrompt, LIVE_INLINE_COMPLETION_REPAIRS, looksLikePrematureCutoff } from "../conversation/responseCompletion";
 import { mergeStreamingTranscript } from "../conversation/transcript";
 import { GeminiTtsAdapter, type TtsStreamer } from "./GeminiTtsAdapter";
-import { isGemini25LiveModel, isGemini31ExpressiveTtsMode, normalizeLiveModelId } from "./catalog";
+import { isConversationalLiveModel, isGemini25LiveModel, isGemini31ExpressiveTtsMode, normalizeLiveModelId } from "./catalog";
 
 type Subscriber = (event: ProviderEvent) => void;
 
@@ -26,7 +26,7 @@ const REALTIME_INPUT_CONFIG = {
     startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
     endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
     prefixPaddingMs: 120,
-    silenceDurationMs: 650,
+    silenceDurationMs: 900,
   },
 };
 
@@ -215,9 +215,6 @@ export class GeminiLiveAdapter {
     const is25 = isGemini25LiveModel(resolvedModel);
     const transcription = transcriptionConfig(resolvedModel);
     const config: Record<string, unknown> = {
-      // 3.1 Flash Live rejects a TEXT-only response modality. The hybrid mode
-      // therefore keeps the supported native AUDIO response, suppresses that PCM
-      // client-side, and uses outputAudioTranscription as the separate TTS script.
       responseModalities: [Modality.AUDIO],
       speechConfig: speechConfig(resolvedModel, voiceName),
       inputAudioTranscription: transcription,
@@ -297,17 +294,28 @@ export class GeminiLiveAdapter {
     });
   }
 
+  private sendTextTurn(text: string): void {
+    if (!this.session) return;
+    // Gemini 3.1 Live uses realtime text during an active conversation. Gemini
+    // 2.5 supports incremental client-content turns, so retain its proven path.
+    if (isGemini25LiveModel(this.activeModelId)) {
+      this.session.sendClientContent({ turns: text, turnComplete: true });
+      return;
+    }
+    this.session.sendRealtimeInput({ text });
+  }
+
   sendText(text: string): void {
     if (!this.isReady) throw new Error("Live 연결이 아직 준비되지 않았습니다.");
     this.cancelExternalTts();
     this.resetTurnTracking();
     this.emitInferredExpression(text);
-    this.session?.sendClientContent({ turns: text, turnComplete: true });
+    this.sendTextTurn(text);
   }
 
   sendContinuationRecovery(): void {
     if (!this.isReady) return;
-    this.session?.sendClientContent({ turns: completionRepairPrompt(), turnComplete: true });
+    this.sendTextTurn(completionRepairPrompt());
   }
 
   endInputAudio(): void {
@@ -326,8 +334,8 @@ export class GeminiLiveAdapter {
 
   private shouldRepairInlineTurn(serverContent: Record<string, any> | undefined): boolean {
     if (!serverContent?.turnComplete || serverContent?.interrupted) return false;
-    if (!isGemini25LiveModel(this.activeModelId)) return false;
-    if (this.inlineCompletionRepairs >= GEMINI25_INLINE_COMPLETION_REPAIRS) return false;
+    if (!isConversationalLiveModel(this.activeModelId)) return false;
+    if (this.inlineCompletionRepairs >= LIVE_INLINE_COMPLETION_REPAIRS) return false;
     if (!this.modelAudioSeen || !looksLikePrematureCutoff(this.currentOutputTranscript)) return false;
     return true;
   }
@@ -415,8 +423,6 @@ export class GeminiLiveAdapter {
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
       const pcm = new Int16Array(bytes.buffer);
       if (this.externalTtsMode) {
-        // 3.1 Live must still generate AUDIO. Keep a bounded copy of that audio muted
-        // while expressive TTS is attempted so a TTS/API failure never becomes silence.
         this.bufferExternalTtsFallbackAudio(pcm);
         continue;
       }
@@ -436,9 +442,6 @@ export class GeminiLiveAdapter {
       this.currentOutputTranscript = mergeStreamingTranscript(this.currentOutputTranscript, outputText);
       this.emit({ type: "output-transcript", text: outputText });
       this.emitInferredExpression(outputText);
-      // Some Live events can arrive close to the terminal marker. If a final
-      // transcription fragment lands during the grace window, restart the window
-      // so the separate TTS always receives the complete sentence.
       if (finalizePending) this.scheduleExternalTtsFinalize();
     }
 
@@ -467,12 +470,8 @@ export class GeminiLiveAdapter {
         this.scheduleExternalTtsFinalize();
       }
     } else if (this.shouldRepairInlineTurn(serverContent)) {
-      // Gemini 2.5 can emit turnComplete while its own output transcript is clearly
-      // mid-sentence. Do not let the coordinator commit/drain/reopen the microphone.
-      // Start a tiny continuation turn immediately so subsequent PCM is appended to
-      // the already-playing queue and the user hears one continuous answer.
       this.inlineCompletionRepairs += 1;
-      this.session?.sendClientContent({ turns: completionRepairPrompt(), turnComplete: true });
+      this.sendTextTurn(completionRepairPrompt());
     } else {
       if (serverContent?.waitingForInput) this.emit({ type: "waiting-for-input" });
       if (serverContent?.generationComplete) this.emit({ type: "generation-complete" });

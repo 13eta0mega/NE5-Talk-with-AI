@@ -42,19 +42,21 @@ describe("Gemini Live microphone transport reliability", () => {
     expect(endBeforeServerWindow).toBe(false);
   });
 
-  it("still provides a long-silence local fallback after the server window", () => {
+  it("never uses long local silence as a Live turn-completion fallback", () => {
     const detector = new MicTurnDetector();
     for (let i = 0; i < 10; i += 1) detector.feed(pcm(0.08));
     let endSeen = false;
-    for (let i = 0; i < 70; i += 1) {
+    for (let i = 0; i < 1500; i += 1) {
       if (detector.feed(pcm(0)) === "speech-end") endSeen = true;
     }
-    expect(endSeen).toBe(true);
+    expect(endSeen).toBe(false);
+    expect(detector.diagnostics().silenceMs).toBeGreaterThan(20_000);
   });
 
-  it("ends realtime input when a true local fallback or playback ownership occurs", async () => {
+  it("keeps explicit realtime input flushes for user stop and playback ownership", async () => {
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
-    expect(coordinator).toContain('signal === "speech-end"');
+    const detector = await readFile(path.resolve("src/core/audio/MicTurnDetector.ts"), "utf8");
+    expect(detector).toContain('never return "speech-end"');
     expect(coordinator).toContain("this.provider.endInputAudio()");
     expect(coordinator).toContain("private async enterPlaybackMode");
     expect(coordinator).toContain("stale VAD/audio cache across turns");

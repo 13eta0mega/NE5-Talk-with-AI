@@ -10,20 +10,42 @@ function pcm(amplitude: number, samples = 320): Int16Array {
 }
 
 describe("microphone transport recovery", () => {
-  it("detects a local speech end only after a long fallback silence", () => {
+  it("never turns local RMS silence into a Live speech-end", () => {
     expect(MIC_LOCAL_END_SILENCE_MS).toBeGreaterThan(900);
     const detector = new MicTurnDetector();
     expect(detector.feed(pcm(5000))).toBeUndefined();
     expect(detector.feed(pcm(5000))).toBeUndefined();
     expect(detector.feed(pcm(5000))).toBe("speech-start");
-    let ended = false;
-    for (let i = 0; i < 70; i += 1) {
-      if (detector.feed(pcm(0)) === "speech-end") ended = true;
+    for (let i = 0; i < 250; i += 1) {
+      expect(detector.feed(pcm(0))).not.toBe("speech-end");
     }
-    expect(ended).toBe(true);
+    expect(detector.diagnostics().silenceMs).toBeGreaterThan(4000);
   });
 
-  it("uses the documented sensitive speech-start profile on client and token", async () => {
+  it("survives 100 simulated 30-second idle/noise microphone sessions without a false turn end", () => {
+    for (let run = 0; run < 100; run += 1) {
+      const detector = new MicTurnDetector();
+      let falseEnd = false;
+      for (let chunk = 0; chunk < 1500; chunk += 1) {
+        // 20 ms chunks: mostly silence with brief low-level device/background spikes.
+        const amplitude = chunk % 173 === 0 || chunk % 277 === 0 ? 420 : 0;
+        if (detector.feed(pcm(amplitude)) === "speech-end") falseEnd = true;
+      }
+      expect(falseEnd).toBe(false);
+    }
+  });
+
+  it("does not convert a false local speech-start followed by 30 seconds of silence into thinking input", () => {
+    const detector = new MicTurnDetector();
+    expect(detector.feed(pcm(5000))).toBeUndefined();
+    expect(detector.feed(pcm(5000))).toBeUndefined();
+    expect(detector.feed(pcm(5000))).toBe("speech-start");
+    for (let chunk = 0; chunk < 1500; chunk += 1) {
+      expect(detector.feed(pcm(0))).not.toBe("speech-end");
+    }
+  });
+
+  it("uses the documented server VAD profile on client and token", async () => {
     const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const token = await readFile(path.resolve("api/live-token.ts"), "utf8");
     for (const source of [adapter, token]) {
@@ -34,9 +56,10 @@ describe("microphone transport recovery", () => {
     }
   });
 
-  it("flushes Gemini input audio on true local fallback and before model playback", async () => {
+  it("keeps explicit input flushes for user stop and model playback only", async () => {
+    const detector = await readFile(path.resolve("src/core/audio/MicTurnDetector.ts"), "utf8");
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
-    expect(coordinator).toContain('signal === "speech-end"');
+    expect(detector).toContain('never return "speech-end"');
     expect(coordinator).toContain("this.provider.endInputAudio()");
     const playback = coordinator.slice(coordinator.indexOf("private async enterPlaybackMode"), coordinator.indexOf("private async restoreListeningCapture"));
     expect(playback).toContain("this.provider.endInputAudio()");

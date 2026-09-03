@@ -129,11 +129,20 @@ export function installMobileBridge(): void {
     auth: {
       async createLiveToken(request) {
         const session = getStoredSession(request.characterId);
+        if (request.freshSession) {
+          delete session.resumeHandle;
+          delete session.resumeHandleUpdatedAt;
+          delete session.resumeVoiceName;
+          delete session.resumeModelId;
+          writeJson(sessionKey(request.characterId), { ...session, updatedAt: Date.now() });
+        }
         const apiKey = readStoredApiKey();
         return apiRequest("/api/live-token", {
           method: "POST",
           body: JSON.stringify({
-            ...request,
+            characterId: request.characterId,
+            voiceName: request.voiceName,
+            modelId: request.modelId,
             apiKey,
             resumeHandle: session.resumeHandle,
             resumeVoiceName: session.resumeVoiceName,

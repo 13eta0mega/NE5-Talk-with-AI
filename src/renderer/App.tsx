@@ -293,7 +293,12 @@ export default function App() {
 
   const status = STATUS[phase];
   const visibleStatusLabel = micReady ? "마이크 입력 가능" : status.label;
-  const visibleStatusNote = micReady ? "실제 마이크 PCM 입력이 확인됐어" : status.note;
+  const visibleStatusNote = micReady
+    ? "실제 마이크 PCM 입력이 확인됐어"
+    : phase === "error" && snapshot.error
+      ? snapshot.error
+      : status.note;
+  const showOutputTranscript = phase !== "error" && transcriptEnabled && Boolean(snapshot.outputTranscript);
   const chatDisabled = ["disconnected", "connecting", "reconnecting", "error", "speaking", "thinking"].includes(snapshot.phase);
   return (
     <div className="app-shell">
@@ -324,7 +329,7 @@ export default function App() {
         <section className="conversation-bar">
           <div className="transcript-area">
             <span className="speaker-label">{phase === "speaking" ? profile.displayName : micReady ? "MIC READY" : "STATUS"}</span>
-            {transcriptEnabled && snapshot.outputTranscript ? <p className="model-transcript">{snapshot.outputTranscript}</p> : <p className="model-transcript status-copy">{visibleStatusNote}</p>}
+            {showOutputTranscript ? <p className="model-transcript">{snapshot.outputTranscript}</p> : <p className="model-transcript status-copy">{visibleStatusNote}</p>}
             {transcriptEnabled && snapshot.inputTranscript && <small className="input-transcript">나 · {snapshot.inputTranscript}</small>}
           </div>
           <div className="audio-wave" aria-hidden="true">{Array.from({ length: 17 }, (_, index) => <i key={index} style={{ height: `${8 + ((phase === "speaking" ? mouthLevel : inputLevel) * (16 + (index % 5) * 8))}px` }} />)}</div>

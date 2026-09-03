@@ -13,6 +13,7 @@ const GESTURES = new Set<GestureId>([
 
 const KOREAN_LANGUAGE_CODE = "ko-KR";
 const LIVE_CONNECT_TIMEOUT_MS = 12000;
+const RESUME_CONNECT_TIMEOUT_MS = 6000;
 const REALTIME_INPUT_CONFIG = {
   activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
@@ -96,10 +97,39 @@ export class GeminiLiveAdapter {
 
   async connect(characterId: string, voiceName: string, modelId: string): Promise<void> {
     if (!window.deskPet) throw new Error("Live 모드는 Electron 앱에서 실행해야 합니다.");
-    const epoch = ++this.connectionEpoch;
     this.ready = false;
     this.session = undefined;
+    const firstEpoch = ++this.connectionEpoch;
     const credentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId });
+    try {
+      await this.openSession(characterId, voiceName, modelId, credentials, firstEpoch);
+      return;
+    } catch (error) {
+      if (firstEpoch !== this.connectionEpoch || !credentials.hasResumeState) throw error;
+    }
+
+    // Gemini accepts an ephemeral token constrained to an expired/invalid resume
+    // handle, opens the WebSocket, and then never sends setupComplete. Retrying the
+    // same handle therefore creates a permanent timeout loop. Clear it and issue a
+    // new one-use token for a genuinely fresh Live session.
+    await window.deskPet.session.update({ characterId, resumeHandle: null }).catch(() => undefined);
+    const freshEpoch = ++this.connectionEpoch;
+    const freshCredentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId, freshSession: true });
+    try {
+      await this.openSession(characterId, voiceName, modelId, freshCredentials, freshEpoch);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "알 수 없는 연결 오류";
+      throw new Error(`저장된 세션을 초기화했지만 Gemini Live 새 연결에도 실패했습니다: ${detail}`);
+    }
+  }
+
+  private async openSession(
+    characterId: string,
+    voiceName: string,
+    modelId: string,
+    credentials: { token: string; model: string; expiresAt: number; hasResumeState: boolean },
+    epoch: number,
+  ): Promise<void> {
     const ai = new GoogleGenAI({ apiKey: credentials.token });
     const resolvedModel = normalizeLiveModelId(credentials.model);
     const is25 = isGemini25LiveModel(resolvedModel);
@@ -124,7 +154,8 @@ export class GeminiLiveAdapter {
     const earlyFailure = new Promise<never>((_, reject) => { rejectSetup = reject; });
     let timeoutId: number | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timeoutId = window.setTimeout(() => reject(new Error("Gemini Live 연결 준비 시간이 초과되었습니다.")), LIVE_CONNECT_TIMEOUT_MS);
+      const timeoutMs = credentials.hasResumeState ? RESUME_CONNECT_TIMEOUT_MS : LIVE_CONNECT_TIMEOUT_MS;
+      timeoutId = window.setTimeout(() => reject(new Error("Gemini Live 연결 준비 시간이 초과되었습니다.")), timeoutMs);
     });
 
     const connectPromise = ai.live.connect({

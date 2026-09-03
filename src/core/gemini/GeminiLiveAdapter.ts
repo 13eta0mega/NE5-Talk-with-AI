@@ -1,10 +1,11 @@
 import { GoogleGenAI, Modality } from "@google/genai";
-import { EMOTION_IDS, normalizeEmotionId, type GestureId, type ProviderEvent } from "../types";
+import { EMOTION_IDS, normalizeEmotionId, type EmotionId, type GestureId, type ProviderEvent } from "../types";
 import { int16ToBase64 } from "../audio/pcm";
 import { inferEmotionFromText } from "../emotion";
 import { completionRepairPrompt, GEMINI25_INLINE_COMPLETION_REPAIRS, looksLikePrematureCutoff } from "../conversation/responseCompletion";
 import { mergeStreamingTranscript } from "../conversation/transcript";
-import { isGemini25LiveModel, normalizeLiveModelId } from "./catalog";
+import { GeminiTtsAdapter, type TtsStreamer } from "./GeminiTtsAdapter";
+import { isGemini25LiveModel, isGemini31ExpressiveTtsMode, normalizeLiveModelId } from "./catalog";
 
 type Subscriber = (event: ProviderEvent) => void;
 
@@ -16,6 +17,7 @@ const KOREAN_LANGUAGE_CODE = "ko-KR";
 const LIVE_CONNECT_TIMEOUT_MS = 12000;
 const RESUME_CONNECT_TIMEOUT_MS = 6000;
 const GO_AWAY_RECONNECT_LEAD_MS = 1200;
+const EXTERNAL_TTS_FINALIZE_GRACE_MS = 240;
 const REALTIME_INPUT_CONFIG = {
   activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
@@ -76,10 +78,20 @@ export class GeminiLiveAdapter {
   private connectionEpoch = 0;
   private ready = false;
   private goAwayTimer?: number;
+  private externalTtsFinalizeTimer?: number;
   private activeModelId = "";
   private currentOutputTranscript = "";
   private inlineCompletionRepairs = 0;
   private modelAudioSeen = false;
+  private externalTtsMode = false;
+  private externalTtsActive = false;
+  private externalTtsEpoch = 0;
+  private currentCharacterId = "greus-greeny";
+  private currentVoiceName = "Leda";
+  private currentEmotion: EmotionId = "idle";
+  private currentEmotionIntensity = 0.7;
+
+  constructor(private readonly tts: TtsStreamer = new GeminiTtsAdapter()) {}
 
   get isReady(): boolean { return this.ready && Boolean(this.session); }
 
@@ -99,6 +111,18 @@ export class GeminiLiveAdapter {
     this.goAwayTimer = undefined;
   }
 
+  private clearExternalTtsFinalizeTimer(): void {
+    if (this.externalTtsFinalizeTimer !== undefined) window.clearTimeout(this.externalTtsFinalizeTimer);
+    this.externalTtsFinalizeTimer = undefined;
+  }
+
+  private cancelExternalTts(): void {
+    this.clearExternalTtsFinalizeTimer();
+    this.externalTtsEpoch += 1;
+    this.externalTtsActive = false;
+    this.tts.cancel();
+  }
+
   private resetTurnTracking(): void {
     this.currentOutputTranscript = "";
     this.inlineCompletionRepairs = 0;
@@ -108,12 +132,18 @@ export class GeminiLiveAdapter {
   private emitInferredExpression(text: string): void {
     const inferred = inferEmotionFromText(text);
     if (!inferred) return;
+    this.currentEmotion = inferred.emotion;
+    this.currentEmotionIntensity = inferred.intensity;
     this.emit({ type: "expression", emotion: inferred.emotion, intensity: inferred.intensity });
   }
 
   async connect(characterId: string, voiceName: string, modelId: string): Promise<void> {
     if (!window.deskPet) throw new Error("Live 모드는 Electron 앱에서 실행해야 합니다.");
     this.clearGoAwayTimer();
+    this.cancelExternalTts();
+    this.currentCharacterId = characterId;
+    this.currentVoiceName = voiceName;
+    this.externalTtsMode = isGemini31ExpressiveTtsMode(modelId);
     this.activeModelId = normalizeLiveModelId(modelId);
     this.resetTurnTracking();
     this.ready = false;
@@ -148,16 +178,19 @@ export class GeminiLiveAdapter {
     const ai = new GoogleGenAI({ apiKey: credentials.token });
     const resolvedModel = normalizeLiveModelId(credentials.model);
     this.activeModelId = resolvedModel;
+    this.externalTtsMode = isGemini31ExpressiveTtsMode(modelId);
     const is25 = isGemini25LiveModel(resolvedModel);
     const transcription = transcriptionConfig(resolvedModel);
     const config: Record<string, unknown> = {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: speechConfig(resolvedModel, voiceName),
+      responseModalities: [this.externalTtsMode ? Modality.TEXT : Modality.AUDIO],
       inputAudioTranscription: transcription,
-      outputAudioTranscription: transcription,
       realtimeInputConfig: REALTIME_INPUT_CONFIG,
       sessionResumption: {},
     };
+    if (!this.externalTtsMode) {
+      config.speechConfig = speechConfig(resolvedModel, voiceName);
+      config.outputAudioTranscription = transcription;
+    }
     if (is25) {
       config.thinkingConfig = { thinkingBudget: 0 };
     } else {
@@ -192,6 +225,7 @@ export class GeminiLiveAdapter {
         onclose: (event: { reason?: string; code?: number }) => {
           if (epoch !== this.connectionEpoch) return;
           this.clearGoAwayTimer();
+          this.cancelExternalTts();
           this.ready = false;
           this.session = undefined;
           const message = closeMessage(event.code, event.reason);
@@ -231,6 +265,7 @@ export class GeminiLiveAdapter {
 
   sendText(text: string): void {
     if (!this.isReady) throw new Error("Live 연결이 아직 준비되지 않았습니다.");
+    this.cancelExternalTts();
     this.resetTurnTracking();
     this.emitInferredExpression(text);
     this.session?.sendClientContent({ turns: text, turnComplete: true });
@@ -248,6 +283,7 @@ export class GeminiLiveAdapter {
 
   async close(): Promise<void> {
     this.clearGoAwayTimer();
+    this.cancelExternalTts();
     this.connectionEpoch += 1;
     this.ready = false;
     this.session?.close();
@@ -262,11 +298,61 @@ export class GeminiLiveAdapter {
     return true;
   }
 
+  private scheduleExternalTtsFinalize(): void {
+    this.clearExternalTtsFinalizeTimer();
+    this.externalTtsFinalizeTimer = window.setTimeout(() => {
+      this.externalTtsFinalizeTimer = undefined;
+      this.finalizeExternalTtsTurn();
+    }, EXTERNAL_TTS_FINALIZE_GRACE_MS);
+  }
+
+  private finalizeExternalTtsTurn(): void {
+    this.clearExternalTtsFinalizeTimer();
+    if (!this.externalTtsMode || this.externalTtsActive) return;
+    const text = this.currentOutputTranscript.trim();
+    if (!text) {
+      this.emit({ type: "generation-complete" });
+      this.emit({ type: "turn-complete" });
+      this.resetTurnTracking();
+      return;
+    }
+
+    this.externalTtsActive = true;
+    const epoch = ++this.externalTtsEpoch;
+    const request = {
+      text,
+      characterId: this.currentCharacterId,
+      voiceName: this.currentVoiceName,
+      emotion: this.currentEmotion,
+      intensity: this.currentEmotionIntensity,
+    };
+    void this.tts.stream(request, async (pcm) => {
+      if (epoch !== this.externalTtsEpoch || !this.externalTtsMode) return;
+      this.modelAudioSeen = true;
+      this.emit({ type: "audio", pcm });
+    }).then(() => {
+      if (epoch !== this.externalTtsEpoch || !this.externalTtsMode) return;
+      this.externalTtsActive = false;
+      this.emit({ type: "generation-complete" });
+      this.emit({ type: "turn-complete" });
+      this.resetTurnTracking();
+    }).catch((error) => {
+      if (epoch !== this.externalTtsEpoch || !this.externalTtsMode) return;
+      this.externalTtsActive = false;
+      const message = error instanceof Error ? error.message : "Gemini 3.1 Flash TTS 스트리밍에 실패했습니다.";
+      this.emit({ type: "tts-error", message: `표현형 TTS 오류: ${message}` });
+      this.emit({ type: "generation-complete" });
+      this.emit({ type: "turn-complete" });
+      this.resetTurnTracking();
+    });
+  }
+
   private handleMessage(message: Record<string, any>, characterId: string, voiceName: string, modelId: string): void {
     const serverContent = message.serverContent;
+    const modelParts = serverContent?.modelTurn?.parts ?? [];
     const encodedAudioParts: string[] = typeof message.data === "string"
       ? [message.data]
-      : (serverContent?.modelTurn?.parts ?? [])
+      : modelParts
         .map((part: any) => part.inlineData?.data)
         .filter((data: unknown): data is string => typeof data === "string");
     for (const encodedAudio of encodedAudioParts) {
@@ -284,15 +370,45 @@ export class GeminiLiveAdapter {
       this.emit({ type: "input-transcript", text: inputText });
       this.emitInferredExpression(inputText);
     }
-    if (outputText) {
+    if (!this.externalTtsMode && outputText) {
       this.currentOutputTranscript = mergeStreamingTranscript(this.currentOutputTranscript, outputText);
       this.emit({ type: "output-transcript", text: outputText });
       this.emitInferredExpression(outputText);
     }
+    if (this.externalTtsMode) {
+      for (const part of modelParts) {
+        const text = typeof part?.text === "string" ? part.text : "";
+        if (!text) continue;
+        this.clearExternalTtsFinalizeTimer();
+        this.currentOutputTranscript = mergeStreamingTranscript(this.currentOutputTranscript, text);
+        this.emit({ type: "output-transcript", text });
+        this.emitInferredExpression(text);
+      }
+    }
+
+    const calls = message.toolCall?.functionCalls ?? [];
+    if (calls.length) {
+      const responses = calls.map((call: any) => {
+        if (call.name === "set_pet_expression") {
+          const emotion = normalizeEmotionId(call.args?.emotion);
+          const intensity = Math.max(0, Math.min(1, Number(call.args?.intensity ?? 0.7)));
+          const gesture = GESTURES.has(call.args?.gesture) ? call.args.gesture as GestureId : undefined;
+          this.currentEmotion = emotion;
+          this.currentEmotionIntensity = intensity;
+          this.emit({ type: "expression", emotion, intensity, gesture });
+        }
+        return { id: call.id, name: call.name, response: { result: { acknowledged: true } } };
+      });
+      this.session?.sendToolResponse({ functionResponses: responses });
+    }
 
     if (serverContent?.interrupted) {
+      this.cancelExternalTts();
       this.resetTurnTracking();
       this.emit({ type: "interrupted" });
+    } else if (this.externalTtsMode) {
+      if (serverContent?.turnComplete || serverContent?.waitingForInput) this.finalizeExternalTtsTurn();
+      else if (serverContent?.generationComplete) this.scheduleExternalTtsFinalize();
     } else if (this.shouldRepairInlineTurn(serverContent)) {
       // Gemini 2.5 can emit turnComplete while its own output transcript is clearly
       // mid-sentence. Do not let the coordinator commit/drain/reopen the microphone.
@@ -333,20 +449,6 @@ export class GeminiLiveAdapter {
       };
       if (delayMs === 0) emitGoAway();
       else this.goAwayTimer = window.setTimeout(emitGoAway, delayMs);
-    }
-
-    const calls = message.toolCall?.functionCalls ?? [];
-    if (calls.length) {
-      const responses = calls.map((call: any) => {
-        if (call.name === "set_pet_expression") {
-          const emotion = normalizeEmotionId(call.args?.emotion);
-          const intensity = Math.max(0, Math.min(1, Number(call.args?.intensity ?? 0.7)));
-          const gesture = GESTURES.has(call.args?.gesture) ? call.args.gesture as GestureId : undefined;
-          this.emit({ type: "expression", emotion, intensity, gesture });
-        }
-        return { id: call.id, name: call.name, response: { result: { acknowledged: true } } };
-      });
-      this.session?.sendToolResponse({ functionResponses: responses });
     }
   }
 }

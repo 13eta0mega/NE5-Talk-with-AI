@@ -14,11 +14,20 @@ type StreamingApiResponse = ApiResponse & {
   headersSent?: boolean;
 };
 
+type DeliveryPath = "interactions-stream" | "interactions-fallback" | "generate-content-fallback";
+
+type InteractionAudio = {
+  data: string;
+  mimeType?: string;
+  sampleRate?: number;
+  channels?: number;
+};
+
 function isEmotionId(value: unknown): value is EmotionId {
   return typeof value === "string" && (EMOTION_IDS as readonly string[]).includes(value);
 }
 
-function findAudioData(response: unknown): string | undefined {
+function findLegacyAudioData(response: unknown): string | undefined {
   const value = response as {
     candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string } }> } }>;
   };
@@ -28,6 +37,53 @@ function findAudioData(response: unknown): string | undefined {
     }
   }
   return undefined;
+}
+
+function findInteractionAudio(value: unknown): InteractionAudio | undefined {
+  const response = value as {
+    event_type?: string;
+    type?: string;
+    delta?: { type?: string; data?: string; mime_type?: string; sample_rate?: number; channels?: number };
+    output_audio?: { data?: string; mime_type?: string; sample_rate?: number; channels?: number };
+    interaction?: {
+      output_audio?: { data?: string; mime_type?: string; sample_rate?: number; channels?: number };
+      outputs?: Array<{ type?: string; data?: string; mime_type?: string; sample_rate?: number; channels?: number }>;
+    };
+    outputs?: Array<{ type?: string; data?: string; mime_type?: string; sample_rate?: number; channels?: number }>;
+  };
+
+  if ((response.event_type === "step.delta" || response.type === "step.delta") && response.delta?.type === "audio" && response.delta.data) {
+    return {
+      data: response.delta.data,
+      mimeType: response.delta.mime_type,
+      sampleRate: response.delta.sample_rate,
+      channels: response.delta.channels,
+    };
+  }
+
+  const direct = response.output_audio ?? response.interaction?.output_audio;
+  if (direct?.data) {
+    return { data: direct.data, mimeType: direct.mime_type, sampleRate: direct.sample_rate, channels: direct.channels };
+  }
+
+  for (const output of response.outputs ?? response.interaction?.outputs ?? []) {
+    if (output.type === "audio" && output.data) {
+      return { data: output.data, mimeType: output.mime_type, sampleRate: output.sample_rate, channels: output.channels };
+    }
+  }
+  return undefined;
+}
+
+function validateInteractionAudio(audio: InteractionAudio): void {
+  if (audio.channels !== undefined && audio.channels !== 1) {
+    throw new Error(`Gemini TTS가 지원하지 않는 ${audio.channels}채널 오디오를 반환했습니다.`);
+  }
+  if (audio.sampleRate !== undefined && audio.sampleRate !== 24000) {
+    throw new Error(`Gemini TTS가 예상과 다른 ${audio.sampleRate}Hz 오디오를 반환했습니다.`);
+  }
+  if (audio.mimeType && !["audio/l16", "audio/pcm", "audio/pcm;rate=24000"].includes(audio.mimeType.toLowerCase())) {
+    throw new Error(`Gemini TTS가 PCM이 아닌 ${audio.mimeType} 형식을 반환했습니다.`);
+  }
 }
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
@@ -60,7 +116,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
 
     let bytesWritten = 0;
     let responseStarted = false;
-    const beginAudioResponse = (path: "stream" | "generate-content-fallback") => {
+    const beginAudioResponse = (path: DeliveryPath) => {
       if (responseStarted) return;
       responseStarted = true;
       response.setHeader("Content-Type", "audio/pcm;rate=24000");
@@ -69,48 +125,80 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       response.setHeader("X-Audio-Format", "s16le");
       response.setHeader("X-TTS-Delivery", path);
     };
-    const writeAudio = (audio: Uint8Array, path: "stream" | "generate-content-fallback") => {
+    const writeAudio = (audio: Uint8Array, path: DeliveryPath) => {
       if (!audio.length) return;
       beginAudioResponse(path);
       bytesWritten += audio.length;
       streamingResponse.write(audio);
     };
 
-    let streamError: unknown;
-    try {
-      // The legacy Generate Content streaming endpoint is still officially supported
-      // for 3.1 TTS and gives the lowest latency. Some 3.1 TTS streaming responses can
-      // terminate without usable audio, so a zero-audio attempt is retried once through
-      // non-streaming generateContent below.
-      const stream = await client.models.generateContentStream({
-        model: GEMINI_31_TTS_MODEL,
-        contents: [{ parts: [{ text: input }] }],
-        config: {
-          responseModalities: ["AUDIO"],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: body.voiceName },
-            },
+    const interactions = (client as unknown as { interactions?: { create(params: Record<string, unknown>): Promise<unknown> } }).interactions;
+    let interactionsError: unknown;
+
+    if (interactions?.create) {
+      try {
+        // Gemini's current TTS guide recommends the Interactions API for 3.1 TTS
+        // streaming. It exposes audio deltas directly and avoids depending on the
+        // legacy Generate Content streaming response shape.
+        const stream = await interactions.create({
+          model: GEMINI_31_TTS_MODEL,
+          input,
+          response_format: { type: "audio" },
+          generation_config: {
+            speech_config: [{ voice: body.voiceName, language: "ko-KR" }],
           },
-        },
-      });
-      for await (const chunk of stream) {
-        const data = findAudioData(chunk);
-        if (!data) continue;
-        writeAudio(Buffer.from(data, "base64"), "stream");
+          store: false,
+          stream: true,
+        });
+        for await (const event of stream as AsyncIterable<unknown>) {
+          const audio = findInteractionAudio(event);
+          if (!audio) continue;
+          validateInteractionAudio(audio);
+          writeAudio(Buffer.from(audio.data, "base64"), "interactions-stream");
+        }
+      } catch (error) {
+        interactionsError = error;
+        if (bytesWritten > 0) throw error;
+        console.warn("[deskpet:tts] Interactions streaming failed before audio; retrying non-streaming", {
+          model: GEMINI_31_TTS_MODEL,
+          voiceName: body.voiceName,
+          textLength: text.length,
+          message: error instanceof Error ? error.message : "unknown interactions streaming error",
+        });
       }
-    } catch (error) {
-      streamError = error;
-      if (bytesWritten > 0) throw error;
-      console.warn("[deskpet:tts] streaming TTS failed before audio; retrying non-streaming", {
-        model: GEMINI_31_TTS_MODEL,
-        voiceName: body.voiceName,
-        textLength: text.length,
-        message: error instanceof Error ? error.message : "unknown streaming TTS error",
-      });
+
+      if (!bytesWritten) {
+        try {
+          const fallback = await interactions.create({
+            model: GEMINI_31_TTS_MODEL,
+            input,
+            response_format: { type: "audio" },
+            generation_config: {
+              speech_config: [{ voice: body.voiceName, language: "ko-KR" }],
+            },
+            store: false,
+            stream: false,
+          });
+          const audio = findInteractionAudio(fallback);
+          if (audio) {
+            validateInteractionAudio(audio);
+            writeAudio(Buffer.from(audio.data, "base64"), "interactions-fallback");
+          }
+        } catch (error) {
+          interactionsError = error;
+          console.warn("[deskpet:tts] Interactions non-streaming TTS failed; retrying legacy Generate Content", {
+            model: GEMINI_31_TTS_MODEL,
+            voiceName: body.voiceName,
+            textLength: text.length,
+            message: error instanceof Error ? error.message : "unknown interactions fallback error",
+          });
+        }
+      }
     }
 
     if (!bytesWritten) {
+      // Final compatibility fallback. Generate Content remains supported by Google,
+      // but is no longer the primary 3.1 TTS transport for this app.
       const fallback = await client.models.generateContent({
         model: GEMINI_31_TTS_MODEL,
         contents: [{ parts: [{ text: input }] }],
@@ -123,10 +211,10 @@ export default async function handler(request: ApiRequest, response: ApiResponse
           },
         },
       });
-      const data = findAudioData(fallback);
+      const data = findLegacyAudioData(fallback);
       if (!data) {
-        const streamingDetail = streamError instanceof Error ? ` Streaming error: ${streamError.message}` : "";
-        throw new Error(`Gemini 3.1 Flash TTS가 오디오를 반환하지 않았습니다.${streamingDetail}`);
+        const interactionsDetail = interactionsError instanceof Error ? ` Interactions error: ${interactionsError.message}` : "";
+        throw new Error(`Gemini 3.1 Flash TTS가 오디오를 반환하지 않았습니다.${interactionsDetail}`);
       }
       writeAudio(Buffer.from(data, "base64"), "generate-content-fallback");
     }

@@ -15,7 +15,7 @@ export const VOICE_CATALOG = [
 ] as const;
 
 export const DEFAULT_VOICE_NAME = "Leda";
-export const CHARACTER_VOICE_PROFILE_VERSION = 3;
+export const CHARACTER_VOICE_PROFILE_VERSION = 2;
 
 export const GEMINI_31_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 export const GEMINI_31_TTS_MODEL = "gemini-3.1-flash-tts-preview";

@@ -20,9 +20,26 @@ describe("Gemini 2.5 Live stability profile", () => {
   it("fails fast when setup never completes or the websocket closes early", async () => {
     const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     expect(adapter).toContain("LIVE_CONNECT_TIMEOUT_MS = 12000");
+    expect(adapter).toContain("RESUME_CONNECT_TIMEOUT_MS = 6000");
     expect(adapter).toContain("Promise.race([connectPromise, earlyFailure, timeout])");
     expect(adapter).toContain("rejectSetup?.(new Error(message))");
     expect(adapter).toContain("code?: number");
+  });
+
+  it("falls back to a fresh token when a stored resume handle stalls", async () => {
+    const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
+    const bridge = await readFile(path.resolve("src/mobile/installMobileBridge.ts"), "utf8");
+    expect(adapter).toContain("!credentials.hasResumeState");
+    expect(adapter).toContain("resumeHandle: null");
+    expect(adapter).toContain("freshSession: true");
+    expect(bridge).toContain("if (request.freshSession)");
+    expect(bridge).toContain("delete session.resumeHandle");
+  });
+
+  it("shows the actual terminal error instead of only the generic pause label", async () => {
+    const app = await readFile(path.resolve("src/renderer/App.tsx"), "utf8");
+    expect(app).toContain('phase === "error" && snapshot.error');
+    expect(app).toContain('phase !== "error" && transcriptEnabled');
   });
 
   it("uses a lean 2.5 profile while keeping session resumption", async () => {

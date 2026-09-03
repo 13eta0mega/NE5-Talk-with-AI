@@ -4,7 +4,7 @@ declare global {
   interface Window {
     deskPet?: {
       auth: {
-        createLiveToken(request: { characterId: string; voiceName: string; modelId: string }): Promise<{
+        createLiveToken(request: { characterId: string; voiceName: string; modelId: string; freshSession?: boolean }): Promise<{
           token: string;
           model: string;
           expiresAt: number;

@@ -77,12 +77,12 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
       serverContent: {
         modelTurn: { parts: [{ inlineData: { data: "AQACAA==" } }] },
         outputTranscription: { text: "우와, 그거 정말 멋지다!" },
-        turnComplete: true,
       },
     }, "greus-greeny", "Leda", GEMINI_31_EXPRESSIVE_TTS_MODE);
 
-    // Terminal Live markers are intentionally grace-delayed so a final output
-    // transcription fragment can still be merged before TTS starts.
+    // Finalization is invoked directly here so this unit stays independent of a
+    // browser timer while still verifying native Live PCM suppression and the
+    // output-transcription -> separate-TTS conversion path.
     expect(requests).toHaveLength(0);
     internal.finalizeExternalTtsTurn();
     await Promise.resolve();

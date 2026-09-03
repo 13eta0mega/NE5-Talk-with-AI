@@ -24,7 +24,7 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(prompt).toContain("한국 애니메이션 더빙 성우 스타일");
     expect(prompt).toContain("에너지 높고 반짝이는 느낌");
     expect(prompt).toContain(`<transcript>\n${transcript}\n</transcript>`);
-    expect(prompt.match(new RegExp(transcript.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))).toHaveLength(1);
+    expect(prompt.split(transcript)).toHaveLength(2);
 
     const longPrompt = buildCharacterTtsPrompt("가".repeat(MAX_EXPRESSIVE_TTS_TEXT_LENGTH + 100), "happy", 0.7);
     const spoken = longPrompt.split("<transcript>\n")[1].split("\n</transcript>")[0];
@@ -106,10 +106,9 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(liveTokenSource).toContain("expressiveTtsSystemInstruction");
     expect(liveSource).toContain("Modality.TEXT");
     expect(liveSource).toContain("finalizeExternalTtsTurn");
-    expect(ttsSource).toContain("client.interactions.create");
-    expect(ttsSource).toContain("response_format: { type: \"audio\" }");
-    expect(ttsSource).toContain("speech_config: [{ voice: body.voiceName }]");
-    expect(ttsSource).toContain("stream: true");
+    expect(ttsSource).toContain("client.models.generateContentStream");
+    expect(ttsSource).toContain('responseModalities: ["AUDIO"]');
+    expect(ttsSource).toContain("prebuiltVoiceConfig: { voiceName: body.voiceName }");
     expect(ttsSource).toContain('"audio/pcm;rate=24000"');
   });
 });

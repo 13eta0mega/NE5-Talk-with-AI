@@ -1,4 +1,4 @@
-export const GEMINI25_AUDIO_IDLE_COMMIT_MS = 900;
+export const GEMINI25_AUDIO_IDLE_COMMIT_MS = 2600;
 export const GEMINI25_MAX_COMPLETION_REPAIRS = 1;
 
 const INCOMPLETE_CONNECTIVE = /(?:고|서|는데|지만|니까|면|면서|다가|거나|든지|때문에|그리고|그래서|하지만|또는|하는|되는|있는|없는|같은|위한|위해)$/;

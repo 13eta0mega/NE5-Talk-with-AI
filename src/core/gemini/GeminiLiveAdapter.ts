@@ -2,7 +2,8 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { EMOTION_IDS, normalizeEmotionId, type GestureId, type ProviderEvent } from "../types";
 import { int16ToBase64 } from "../audio/pcm";
 import { inferEmotionFromText } from "../emotion";
-import { completionRepairPrompt } from "../conversation/responseCompletion";
+import { completionRepairPrompt, GEMINI25_INLINE_COMPLETION_REPAIRS, looksLikePrematureCutoff } from "../conversation/responseCompletion";
+import { mergeStreamingTranscript } from "../conversation/transcript";
 import { isGemini25LiveModel, normalizeLiveModelId } from "./catalog";
 
 type Subscriber = (event: ProviderEvent) => void;
@@ -19,8 +20,6 @@ const REALTIME_INPUT_CONFIG = {
   activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
     disabled: false,
-    // HIGH is the more sensitive mode in Gemini Live. LOW was causing quiet/short
-    // Korean utterances to be missed, especially after several Native Audio turns.
     startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
     endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
     prefixPaddingMs: 120,
@@ -77,6 +76,10 @@ export class GeminiLiveAdapter {
   private connectionEpoch = 0;
   private ready = false;
   private goAwayTimer?: number;
+  private activeModelId = "";
+  private currentOutputTranscript = "";
+  private inlineCompletionRepairs = 0;
+  private modelAudioSeen = false;
 
   get isReady(): boolean { return this.ready && Boolean(this.session); }
 
@@ -96,6 +99,12 @@ export class GeminiLiveAdapter {
     this.goAwayTimer = undefined;
   }
 
+  private resetTurnTracking(): void {
+    this.currentOutputTranscript = "";
+    this.inlineCompletionRepairs = 0;
+    this.modelAudioSeen = false;
+  }
+
   private emitInferredExpression(text: string): void {
     const inferred = inferEmotionFromText(text);
     if (!inferred) return;
@@ -105,6 +114,8 @@ export class GeminiLiveAdapter {
   async connect(characterId: string, voiceName: string, modelId: string): Promise<void> {
     if (!window.deskPet) throw new Error("Live 모드는 Electron 앱에서 실행해야 합니다.");
     this.clearGoAwayTimer();
+    this.activeModelId = normalizeLiveModelId(modelId);
+    this.resetTurnTracking();
     this.ready = false;
     this.session = undefined;
     const firstEpoch = ++this.connectionEpoch;
@@ -116,10 +127,6 @@ export class GeminiLiveAdapter {
       if (firstEpoch !== this.connectionEpoch || !credentials.hasResumeState) throw error;
     }
 
-    // Gemini accepts an ephemeral token constrained to an expired/invalid resume
-    // handle, opens the WebSocket, and then never sends setupComplete. Retrying the
-    // same handle therefore creates a permanent timeout loop. Clear it and issue a
-    // new one-use token for a genuinely fresh Live session.
     await window.deskPet.session.update({ characterId, resumeHandle: null }).catch(() => undefined);
     const freshEpoch = ++this.connectionEpoch;
     const freshCredentials = await window.deskPet.auth.createLiveToken({ characterId, voiceName, modelId, freshSession: true });
@@ -140,6 +147,7 @@ export class GeminiLiveAdapter {
   ): Promise<void> {
     const ai = new GoogleGenAI({ apiKey: credentials.token });
     const resolvedModel = normalizeLiveModelId(credentials.model);
+    this.activeModelId = resolvedModel;
     const is25 = isGemini25LiveModel(resolvedModel);
     const transcription = transcriptionConfig(resolvedModel);
     const config: Record<string, unknown> = {
@@ -223,6 +231,7 @@ export class GeminiLiveAdapter {
 
   sendText(text: string): void {
     if (!this.isReady) throw new Error("Live 연결이 아직 준비되지 않았습니다.");
+    this.resetTurnTracking();
     this.emitInferredExpression(text);
     this.session?.sendClientContent({ turns: text, turnComplete: true });
   }
@@ -245,6 +254,14 @@ export class GeminiLiveAdapter {
     this.session = undefined;
   }
 
+  private shouldRepairInlineTurn(serverContent: Record<string, any> | undefined): boolean {
+    if (!serverContent?.turnComplete || serverContent?.interrupted) return false;
+    if (!isGemini25LiveModel(this.activeModelId)) return false;
+    if (this.inlineCompletionRepairs >= GEMINI25_INLINE_COMPLETION_REPAIRS) return false;
+    if (!this.modelAudioSeen || !looksLikePrematureCutoff(this.currentOutputTranscript)) return false;
+    return true;
+  }
+
   private handleMessage(message: Record<string, any>, characterId: string, voiceName: string, modelId: string): void {
     const serverContent = message.serverContent;
     const encodedAudioParts: string[] = typeof message.data === "string"
@@ -256,31 +273,40 @@ export class GeminiLiveAdapter {
       const binary = atob(encodedAudio);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      this.modelAudioSeen = true;
       this.emit({ type: "audio", pcm: new Int16Array(bytes.buffer) });
     }
 
     const inputText = serverContent?.inputTranscription?.text;
     const outputText = serverContent?.outputTranscription?.text;
     if (inputText) {
+      if (!this.modelAudioSeen && !this.currentOutputTranscript) this.inlineCompletionRepairs = 0;
       this.emit({ type: "input-transcript", text: inputText });
       this.emitInferredExpression(inputText);
     }
     if (outputText) {
+      this.currentOutputTranscript = mergeStreamingTranscript(this.currentOutputTranscript, outputText);
       this.emit({ type: "output-transcript", text: outputText });
       this.emitInferredExpression(outputText);
     }
 
-    // A Live server message can carry interrupted together with completion flags.
-    // Interrupted means the current model turn was cancelled, so processing a
-    // turnComplete first can commit/drain stale audio and reopen the microphone in
-    // the middle of that cancelled turn. Give interruption strict precedence and
-    // suppress completion/waiting events from the same message.
     if (serverContent?.interrupted) {
+      this.resetTurnTracking();
       this.emit({ type: "interrupted" });
+    } else if (this.shouldRepairInlineTurn(serverContent)) {
+      // Gemini 2.5 can emit turnComplete while its own output transcript is clearly
+      // mid-sentence. Do not let the coordinator commit/drain/reopen the microphone.
+      // Start a tiny continuation turn immediately so subsequent PCM is appended to
+      // the already-playing queue and the user hears one continuous answer.
+      this.inlineCompletionRepairs += 1;
+      this.session?.sendClientContent({ turns: completionRepairPrompt(), turnComplete: true });
     } else {
       if (serverContent?.waitingForInput) this.emit({ type: "waiting-for-input" });
       if (serverContent?.generationComplete) this.emit({ type: "generation-complete" });
-      if (serverContent?.turnComplete) this.emit({ type: "turn-complete" });
+      if (serverContent?.turnComplete) {
+        this.emit({ type: "turn-complete" });
+        this.resetTurnTracking();
+      }
     }
 
     const resume = message.sessionResumptionUpdate;
@@ -316,7 +342,6 @@ export class GeminiLiveAdapter {
           const emotion = normalizeEmotionId(call.args?.emotion);
           const intensity = Math.max(0, Math.min(1, Number(call.args?.intensity ?? 0.7)));
           const gesture = GESTURES.has(call.args?.gesture) ? call.args.gesture as GestureId : undefined;
-          // Native tool output remains authoritative for newer models.
           this.emit({ type: "expression", emotion, intensity, gesture });
         }
         return { id: call.id, name: call.name, response: { result: { acknowledged: true } } };

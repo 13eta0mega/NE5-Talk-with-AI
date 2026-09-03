@@ -17,25 +17,40 @@ export const VOICE_CATALOG = [
 export const DEFAULT_VOICE_NAME = "Leda";
 export const CHARACTER_VOICE_PROFILE_VERSION = 2;
 
+export const GEMINI_31_LIVE_MODEL = "gemini-3.1-flash-live-preview";
+export const GEMINI_31_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+// Virtual selectable mode. The Live socket itself connects to GEMINI_31_LIVE_MODEL
+// in TEXT mode; speech is rendered separately by GEMINI_31_TTS_MODEL.
+export const GEMINI_31_EXPRESSIVE_TTS_MODE = "gemini-3.1-flash-live-preview-with-expressive-tts";
+
 // Preferred ordering only. This is deliberately NOT an allowlist anymore.
 // Google can publish newer Native Audio / conversational Live model IDs or
 // aliases without requiring an app update. The server verifies actual model
 // availability through models.list() before minting a Live token.
 export const CONVERSATIONAL_LIVE_MODELS = [
-  "gemini-3.1-flash-live-preview",
+  GEMINI_31_LIVE_MODEL,
   "gemini-2.5-flash-native-audio-preview-12-2025",
 ] as const;
 
 export type ConversationalLiveModelId = string;
-export const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
+export const DEFAULT_LIVE_MODEL = GEMINI_31_LIVE_MODEL;
 export const GEMINI_25_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
 
 export function normalizeLiveModelId(value: unknown): string {
   return typeof value === "string" ? value.replace(/^models\//, "").trim() : "";
 }
 
+export function isGemini31ExpressiveTtsMode(value: unknown): boolean {
+  return normalizeLiveModelId(value).toLowerCase() === GEMINI_31_EXPRESSIVE_TTS_MODE;
+}
+
+export function resolveLiveModelId(value: unknown): string {
+  return isGemini31ExpressiveTtsMode(value) ? GEMINI_31_LIVE_MODEL : normalizeLiveModelId(value);
+}
+
 export function isConversationalLiveModel(value: unknown): boolean {
   const id = normalizeLiveModelId(value).toLowerCase();
+  if (id === GEMINI_31_EXPRESSIVE_TTS_MODE) return true;
   if (!id || !id.startsWith("gemini-")) return false;
   if (id.includes("embedding") || id.includes("transcribe") || id.includes("translate") || id.includes("tts")) return false;
   if (id.startsWith("gemini-2.0-") || id === "gemini-live-2.5-flash-preview") return false;
@@ -54,6 +69,7 @@ export function isGemini25LiveModel(value: unknown): boolean {
 
 export function liveModelPreferenceRank(value: unknown): number {
   const id = normalizeLiveModelId(value);
+  if (id === GEMINI_31_EXPRESSIVE_TTS_MODE) return -20;
   const preferredIndex = CONVERSATIONAL_LIVE_MODELS.indexOf(id as (typeof CONVERSATIONAL_LIVE_MODELS)[number]);
   if (preferredIndex >= 0) return preferredIndex;
   if (/^gemini-3\.[2-9]/.test(id) || /^gemini-[4-9]/.test(id)) return -10;

@@ -150,7 +150,7 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(liveSource).toContain("emitExternalTtsFallbackAudio");
     expect(liveSource).toContain("externalTtsFinalizePending");
     expect(ttsSource).toContain("client.models.generateContentStream");
-    expect(ttsSource).toContain("client.models.generateContent(generationRequest)");
+    expect(ttsSource).toContain("client.models.generateContent({");
     expect(ttsSource).toContain("generate-content-fallback");
     expect(ttsSource).toContain('responseModalities: ["AUDIO"]');
     expect(ttsSource).toContain("prebuiltVoiceConfig: { voiceName: body.voiceName }");

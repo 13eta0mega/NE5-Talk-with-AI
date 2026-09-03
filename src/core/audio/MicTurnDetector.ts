@@ -1,5 +1,5 @@
 export const MIC_LOCAL_MIN_SPEECH_MS = 100;
-export const MIC_LOCAL_END_SILENCE_MS = 420;
+export const MIC_LOCAL_END_SILENCE_MS = 1200;
 export const MIC_LOCAL_START_CONFIRM_MS = 60;
 
 export type MicTurnSignal = "speech-start" | "speech-end";
@@ -23,9 +23,10 @@ function pcmRms(pcm: Int16Array): number {
 }
 
 /**
- * Lightweight client-side speech-end detector used with Gemini server VAD.
- * Gemini still detects speech starts; this detector only gives us a reliable
- * audioStreamEnd flush when local speech has clearly ended.
+ * Lightweight client-side speech activity detector used alongside Gemini server
+ * VAD. Server VAD owns conversational turn completion. The long local speech-end
+ * threshold is diagnostic/fallback state only and must never terminate a normal
+ * continuous microphone turn on a short mid-sentence pause.
  */
 export class MicTurnDetector {
   private noiseFloor = 0.0025;

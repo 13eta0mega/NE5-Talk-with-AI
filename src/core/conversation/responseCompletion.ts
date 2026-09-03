@@ -1,5 +1,6 @@
 export const GEMINI25_AUDIO_IDLE_COMMIT_MS = 2600;
 export const GEMINI25_MAX_COMPLETION_REPAIRS = 1;
+export const GEMINI25_INLINE_COMPLETION_REPAIRS = 2;
 
 const INCOMPLETE_CONNECTIVE = /(?:고|서|는데|지만|니까|면|면서|다가|거나|든지|때문에|그리고|그래서|하지만|또는|하는|되는|있는|없는|같은|위한|위해)$/;
 const DANGLING_PARTICLE = /(?:은|는|이|가|을|를|에|의|와|과|도|만|부터|까지|로|으로)$/;
@@ -16,5 +17,5 @@ export function looksLikePrematureCutoff(value: string): boolean {
 }
 
 export function completionRepairPrompt(): string {
-  return "직전 음성 응답이 문장 중간에서 끊겼어. 이미 말한 내용은 반복하지 말고, 끊긴 지점 다음부터 즉시 이어서 한두 문장 안에 자연스럽게 완결해.";
+  return "직전 음성 응답이 서버에서 문장 중간에 종료됐어. 이미 말한 부분은 반복하지 말고 끊긴 지점 바로 다음 내용부터 이어서, 이번에는 짧은 한 문장으로 반드시 완결해.";
 }

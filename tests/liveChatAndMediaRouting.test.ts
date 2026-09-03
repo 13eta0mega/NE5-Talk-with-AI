@@ -24,6 +24,8 @@ describe("live PCM streaming and text chat", () => {
     expect(adapter).toContain('sendClientContent({ turns: text, turnComplete: true })');
     expect(adapter).toContain("if (!this.isReady)");
     expect(coordinator).toContain("async sendText(text: string)");
+    expect(coordinator).toContain("if (this.snapshot.phase === \"disconnected\" || this.snapshot.phase === \"error\")");
+    expect(app).toContain('const chatDisabled = ["connecting", "reconnecting", "speaking", "thinking"]');
     expect(app).toContain("<ChatPanel");
   });
 });

@@ -221,9 +221,12 @@ export default function App() {
   };
 
   const sendChat = async (text: string) => {
-    setChatMessages((messages) => [...messages, { id: ++chatMessageId.current, role: "user", text }]);
     lastAssistantMessage.current = "";
-    try { await coordinator.sendText(text); }
+    try {
+      if (["disconnected", "error"].includes(snapshot.phase)) await coordinator.connect(characterId, voice, modelId);
+      await coordinator.sendText(text);
+      setChatMessages((messages) => [...messages, { id: ++chatMessageId.current, role: "user", text }]);
+    }
     catch (error) { setNotice(error instanceof Error ? error.message : "메시지를 보내지 못했습니다."); throw error; }
   };
 
@@ -295,11 +298,11 @@ export default function App() {
   const visibleStatusLabel = micReady ? "마이크 입력 가능" : status.label;
   const visibleStatusNote = micReady
     ? "실제 마이크 PCM 입력이 확인됐어"
-    : phase === "error" && snapshot.error
+    : ["error", "reconnecting"].includes(phase) && snapshot.error
       ? snapshot.error
       : status.note;
-  const showOutputTranscript = phase !== "error" && transcriptEnabled && Boolean(snapshot.outputTranscript);
-  const chatDisabled = ["disconnected", "connecting", "reconnecting", "error", "speaking", "thinking"].includes(snapshot.phase);
+  const showOutputTranscript = !["error", "reconnecting"].includes(phase) && transcriptEnabled && Boolean(snapshot.outputTranscript);
+  const chatDisabled = ["connecting", "reconnecting", "speaking", "thinking"].includes(snapshot.phase);
   return (
     <div className="app-shell">
       <div className="ambient-blob blob-a" /><div className="ambient-blob blob-b" />

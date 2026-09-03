@@ -57,18 +57,6 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const intensity = Math.max(0, Math.min(1, Number(body.intensity ?? 0.7)));
     const client = await createClient(normalizeClientApiKey(body.apiKey));
     const input = buildCharacterTtsPrompt(text, body.emotion, Number.isFinite(intensity) ? intensity : 0.7);
-    const generationRequest = {
-      model: GEMINI_31_TTS_MODEL,
-      contents: [{ parts: [{ text: input }] }],
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: body.voiceName },
-          },
-        },
-      },
-    } as const;
 
     let bytesWritten = 0;
     let responseStarted = false;
@@ -94,7 +82,18 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       // for 3.1 TTS and gives the lowest latency. Some 3.1 TTS streaming responses can
       // terminate without usable audio, so a zero-audio attempt is retried once through
       // non-streaming generateContent below.
-      const stream = await client.models.generateContentStream(generationRequest);
+      const stream = await client.models.generateContentStream({
+        model: GEMINI_31_TTS_MODEL,
+        contents: [{ parts: [{ text: input }] }],
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: body.voiceName },
+            },
+          },
+        },
+      });
       for await (const chunk of stream) {
         const data = findAudioData(chunk);
         if (!data) continue;
@@ -112,7 +111,18 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     }
 
     if (!bytesWritten) {
-      const fallback = await client.models.generateContent(generationRequest);
+      const fallback = await client.models.generateContent({
+        model: GEMINI_31_TTS_MODEL,
+        contents: [{ parts: [{ text: input }] }],
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: body.voiceName },
+            },
+          },
+        },
+      });
       const data = findAudioData(fallback);
       if (!data) {
         const streamingDetail = streamError instanceof Error ? ` Streaming error: ${streamError.message}` : "";

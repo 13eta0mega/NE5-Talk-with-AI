@@ -15,7 +15,7 @@ describe("real PCM lip sync", () => {
     expect(publicWorklet).toContain("this.emitLevel(0)");
     expect(publicWorklet).toContain("target > this.smoothedLevel ? 0.72 : 0.38");
     expect(engine).toContain('versionedWorkletUrl("playback-processor.js")');
-    expect(engine).toContain('AUDIO_WORKLET_VERSION = "20260903-1"');
+    expect(engine).toContain('AUDIO_WORKLET_VERSION = "20260904-jitter-1"');
   });
 
   it("keeps speaking stable for the whole playback session", async () => {

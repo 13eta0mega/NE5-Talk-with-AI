@@ -71,6 +71,12 @@ export class GeminiTtsAdapter implements TtsStreamer {
     }
     if (!response.body) throw new Error("Gemini TTS 오디오 스트림을 받지 못했습니다.");
 
+    console.info("[deskpet:tts]", {
+      event: "response-ready",
+      delivery: response.headers.get("X-TTS-Delivery") ?? "unknown",
+      sampleRate: response.headers.get("X-Audio-Sample-Rate") ?? "unknown",
+    });
+
     const reader = response.body.getReader();
     let carry = new Uint8Array(0);
     let sampleCount = 0;
@@ -96,5 +102,6 @@ export class GeminiTtsAdapter implements TtsStreamer {
     if (controller.signal.aborted || epoch !== this.requestEpoch) return;
     if (carry.length) throw new Error("Gemini TTS PCM 스트림이 올바른 16-bit 경계로 끝나지 않았습니다.");
     if (!sampleCount) throw new Error("Gemini TTS가 오디오 샘플을 반환하지 않았습니다.");
+    console.info("[deskpet:tts]", { event: "audio-complete", sampleCount });
   }
 }

@@ -58,7 +58,10 @@ describe("Gemini 2.5 Live stability profile", () => {
   it("uses the same expression-tool availability for token constraints and persona", async () => {
     const token = await readFile(path.resolve("api/live-token.ts"), "utf8");
     expect(token).toContain("const expressionToolAvailable = !is25");
-    expect(token).toContain("buildSystemInstruction(body.characterId, memorySummary, expressionToolAvailable)");
+    expect(token).toContain("buildSystemInstruction(");
+    expect(token).toContain("body.characterId,");
+    expect(token).toContain("expressionToolAvailable,");
+    expect(token).toContain('youthfulNative ? "animated-mascot" : "default"');
     expect(token).toContain("constrainedConfig.tools = [expressionTool()]");
   });
 });

@@ -44,8 +44,8 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     if (models.some((model) => model.id === GEMINI_31_LIVE_MODEL)) {
       models.push({
         id: GEMINI_31_NATIVE_YOUTHFUL_MODE,
-        displayName: "Gemini 3.1 Live · 젊은 감정 캐릭터",
-        description: "별도 TTS 없이 Gemini 3.1 Native Audio만 사용하며 더 젊고 밝은 톤과 감정 연기를 강화한 저지연 모드 · Leda 권장",
+        displayName: "Gemini 3.1 Live · 애니메이션 마스코트 보이스",
+        description: "별도 TTS 없이 Gemini 3.1 Native Audio만 사용하며 밝고 높은 톤, vocal smile, 빠른 감정 변화와 마스코트 연기를 강화한 저지연 모드 · Leda 권장",
         supportedActions: ["bidi", "native-audio", "expression"],
       });
     }

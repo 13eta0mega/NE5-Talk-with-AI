@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LiveModelOption, SecureSettingsPublic } from "../../core/types";
 import { DEFAULT_VOICE_NAME, VOICE_CATALOG } from "../../core/gemini/catalog";
+import { normalizeVoicePitch, VOICE_PITCH_LEVELS, voicePitchLabel } from "../../core/gemini/voicePitch";
 
 type SinkAudioElement = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> };
 
@@ -51,11 +52,22 @@ export function SettingsDrawer({
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [voicePitch, setVoicePitch] = useState(0);
   const [speakerTestState, setSpeakerTestState] = useState<"idle" | "running" | "ok" | "error">("idle");
   const [microphoneTestState, setMicrophoneTestState] = useState<"idle" | "running" | "ok" | "error">("idle");
   const [microphoneTestLevel, setMicrophoneTestLevel] = useState(0);
   const testRun = useRef(0);
   const brokerManaged = secureSettings?.apiKeyEditable === false;
+
+  useEffect(() => {
+    setVoicePitch(normalizeVoicePitch(secureSettings?.selectedVoicePitch));
+  }, [secureSettings?.selectedVoicePitch]);
+
+  const changeVoicePitch = (value: number) => {
+    const next = normalizeVoicePitch(value);
+    setVoicePitch(next);
+    void window.deskPet?.settings.savePreferences({ voicePitch: next });
+  };
 
   const submitKey = async () => {
     if (!apiKey.trim()) return;
@@ -156,6 +168,12 @@ export function SettingsDrawer({
       <div className="setting-block">
         <label>목소리 · {VOICE_CATALOG.length}개 전체</label>
         <div className="voice-catalog" role="radiogroup" aria-label="Gemini 목소리">{VOICE_CATALOG.map(([name, description]) => <button key={name} role="radio" aria-checked={voice === name} className={voice === name ? "active" : ""} onClick={() => onVoice(name)}><strong>{name}</strong><small>{description}{name === DEFAULT_VOICE_NAME ? " · 그린냥 추천" : ""}</small></button>)}</div>
+      </div>
+      <div className="setting-block">
+        <div className="label-row"><label htmlFor="voice-pitch">목소리 피치</label><span className="key-status saved">{voicePitch > 0 ? `+${voicePitch}` : voicePitch} · {voicePitchLabel(voicePitch)}</span></div>
+        <input id="voice-pitch" type="range" min={VOICE_PITCH_LEVELS[0]} max={VOICE_PITCH_LEVELS[VOICE_PITCH_LEVELS.length - 1]} step="1" value={voicePitch} onChange={(event) => changeVoicePitch(Number(event.target.value))} aria-label="Gemini 3.1 목소리 피치" />
+        <div className="setting-actions">{VOICE_PITCH_LEVELS.map((level) => <button key={level} className={voicePitch === level ? "primary-mini" : "text-button"} onClick={() => changeVoicePitch(level)}>{level > 0 ? `+${level}` : level}</button>)}</div>
+        <p className="hint">Gemini 3.1 Live에는 숫자형 semitone 피치 파라미터가 없어 상대적인 발성 지시로 조절합니다. −2는 낮게, +2는 높게이며 말속도는 바꾸지 않습니다. 현재 연결 중이면 다음 Live 재연결부터 적용됩니다.</p>
       </div>
       <div className="setting-block">
         <div className="label-row"><label htmlFor="microphone">마이크</label><button className="text-button" onClick={onRefreshDevices}>권한 허용 · 장치 검색</button></div>

@@ -18,6 +18,7 @@ const LIVE_CONNECT_TIMEOUT_MS = 12000;
 const RESUME_CONNECT_TIMEOUT_MS = 6000;
 const GO_AWAY_RECONNECT_LEAD_MS = 1200;
 const EXTERNAL_TTS_FINALIZE_GRACE_MS = 240;
+const EXTERNAL_TTS_FALLBACK_MAX_SAMPLES = 24_000 * 45;
 const REALTIME_INPUT_CONFIG = {
   activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
@@ -87,6 +88,9 @@ export class GeminiLiveAdapter {
   private externalTtsMode = false;
   private externalTtsActive = false;
   private externalTtsEpoch = 0;
+  private externalTtsAudioSeen = false;
+  private externalTtsFallbackAudio: Int16Array[] = [];
+  private externalTtsFallbackSamples = 0;
   private currentCharacterId = "greus-greeny";
   private currentVoiceName = "Leda";
   private currentEmotion: EmotionId = "idle";
@@ -117,11 +121,35 @@ export class GeminiLiveAdapter {
     this.externalTtsFinalizeTimer = undefined;
   }
 
+  private clearExternalTtsFallbackAudio(): void {
+    this.externalTtsFallbackAudio = [];
+    this.externalTtsFallbackSamples = 0;
+  }
+
+  private bufferExternalTtsFallbackAudio(pcm: Int16Array): void {
+    if (!pcm.length || this.externalTtsFallbackSamples >= EXTERNAL_TTS_FALLBACK_MAX_SAMPLES) return;
+    const remaining = EXTERNAL_TTS_FALLBACK_MAX_SAMPLES - this.externalTtsFallbackSamples;
+    const copy = pcm.length <= remaining ? pcm.slice() : pcm.slice(0, remaining);
+    this.externalTtsFallbackAudio.push(copy);
+    this.externalTtsFallbackSamples += copy.length;
+  }
+
+  private emitExternalTtsFallbackAudio(): boolean {
+    if (!this.externalTtsFallbackAudio.length) return false;
+    const chunks = this.externalTtsFallbackAudio;
+    this.clearExternalTtsFallbackAudio();
+    this.modelAudioSeen = true;
+    for (const pcm of chunks) this.emit({ type: "audio", pcm });
+    return true;
+  }
+
   private cancelExternalTts(): void {
     this.clearExternalTtsFinalizeTimer();
     this.externalTtsFinalizePending = false;
     this.externalTtsEpoch += 1;
     this.externalTtsActive = false;
+    this.externalTtsAudioSeen = false;
+    this.clearExternalTtsFallbackAudio();
     this.tts.cancel();
   }
 
@@ -130,6 +158,8 @@ export class GeminiLiveAdapter {
     this.inlineCompletionRepairs = 0;
     this.modelAudioSeen = false;
     this.externalTtsFinalizePending = false;
+    this.externalTtsAudioSeen = false;
+    this.clearExternalTtsFallbackAudio();
   }
 
   private emitInferredExpression(text: string): void {
@@ -318,7 +348,13 @@ export class GeminiLiveAdapter {
     if (!this.externalTtsMode || this.externalTtsActive) return;
     const text = this.currentOutputTranscript.trim();
     if (!text) {
-      this.emit({ type: "tts-error", message: "표현형 TTS 오류: Gemini Live 출력 전사를 받지 못했습니다." });
+      const fallbackUsed = this.emitExternalTtsFallbackAudio();
+      this.emit({
+        type: "tts-error",
+        message: fallbackUsed
+          ? "표현형 TTS 오류: Gemini Live 출력 전사를 받지 못해 Live 기본 음성으로 대체 재생했습니다."
+          : "표현형 TTS 오류: Gemini Live 출력 전사를 받지 못했습니다.",
+      });
       this.emit({ type: "generation-complete" });
       this.emit({ type: "turn-complete" });
       this.resetTurnTracking();
@@ -326,6 +362,7 @@ export class GeminiLiveAdapter {
     }
 
     this.externalTtsActive = true;
+    this.externalTtsAudioSeen = false;
     const epoch = ++this.externalTtsEpoch;
     const request = {
       text,
@@ -336,11 +373,13 @@ export class GeminiLiveAdapter {
     };
     void this.tts.stream(request, async (pcm) => {
       if (epoch !== this.externalTtsEpoch || !this.externalTtsMode) return;
+      this.externalTtsAudioSeen = true;
       this.modelAudioSeen = true;
       this.emit({ type: "audio", pcm });
     }).then(() => {
       if (epoch !== this.externalTtsEpoch || !this.externalTtsMode) return;
       this.externalTtsActive = false;
+      this.clearExternalTtsFallbackAudio();
       this.emit({ type: "generation-complete" });
       this.emit({ type: "turn-complete" });
       this.resetTurnTracking();
@@ -348,7 +387,14 @@ export class GeminiLiveAdapter {
       if (epoch !== this.externalTtsEpoch || !this.externalTtsMode) return;
       this.externalTtsActive = false;
       const message = error instanceof Error ? error.message : "Gemini 3.1 Flash TTS 스트리밍에 실패했습니다.";
-      this.emit({ type: "tts-error", message: `표현형 TTS 오류: ${message}` });
+      const fallbackUsed = !this.externalTtsAudioSeen && this.emitExternalTtsFallbackAudio();
+      console.error("[deskpet:tts] expressive TTS playback failed", { message, fallbackUsed });
+      this.emit({
+        type: "tts-error",
+        message: fallbackUsed
+          ? `표현형 TTS 오류: ${message} · Live 기본 음성으로 대체 재생했습니다.`
+          : `표현형 TTS 오류: ${message}`,
+      });
       this.emit({ type: "generation-complete" });
       this.emit({ type: "turn-complete" });
       this.resetTurnTracking();
@@ -364,15 +410,18 @@ export class GeminiLiveAdapter {
         .map((part: any) => part.inlineData?.data)
         .filter((data: unknown): data is string => typeof data === "string");
     for (const encodedAudio of encodedAudioParts) {
-      // Hybrid mode must ask Live for AUDIO because 3.1 rejects TEXT-only Live
-      // responses. Do not play that native voice; outputAudioTranscription below
-      // is the canonical script that is rendered by Gemini 3.1 Flash TTS.
-      if (this.externalTtsMode) continue;
       const binary = atob(encodedAudio);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      const pcm = new Int16Array(bytes.buffer);
+      if (this.externalTtsMode) {
+        // 3.1 Live must still generate AUDIO. Keep a bounded copy of that audio muted
+        // while expressive TTS is attempted so a TTS/API failure never becomes silence.
+        this.bufferExternalTtsFallbackAudio(pcm);
+        continue;
+      }
       this.modelAudioSeen = true;
-      this.emit({ type: "audio", pcm: new Int16Array(bytes.buffer) });
+      this.emit({ type: "audio", pcm });
     }
 
     const inputText = serverContent?.inputTranscription?.text;

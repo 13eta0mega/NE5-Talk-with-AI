@@ -15,7 +15,9 @@ const REALTIME_INPUT_CONFIG = {
     startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
     endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
     prefixPaddingMs: 120,
-    silenceDurationMs: 650,
+    // Give natural Korean clause pauses enough room. Continuous microphone turns
+    // are finalized by Gemini server VAD instead of the old 420ms local cutoff.
+    silenceDurationMs: 900,
   },
 };
 

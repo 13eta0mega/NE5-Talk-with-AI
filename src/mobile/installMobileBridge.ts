@@ -1,5 +1,6 @@
 import type { LogicalSessionPublic, SecureSettingsPublic } from "../core/types";
 import { CHARACTER_VOICE_PROFILE_VERSION, coerceConversationalLiveModel, DEFAULT_LIVE_MODEL, DEFAULT_VOICE_NAME } from "../core/gemini/catalog";
+import { DEFAULT_VOICE_PITCH, normalizeVoicePitch } from "../core/gemini/voicePitch";
 
 const SETTINGS_KEY = "deskpet:mobile-settings:v1";
 const API_KEY_STORAGE_KEY = "deskpet:mobile-gemini-api-key:v1";
@@ -8,7 +9,7 @@ const VOICE_PROFILE_VERSION_KEY = "deskpet:voice-profile-version";
 const API_TIMEOUT_MS = 12000;
 
 type StoredSettings = Pick<SecureSettingsPublic,
-  "selectedVoiceName" | "selectedModelId" | "selectedCharacterId" |
+  "selectedVoiceName" | "selectedVoicePitch" | "selectedModelId" | "selectedCharacterId" |
   "microphoneId" | "speakerId" | "transcriptEnabled">;
 type StoredSession = LogicalSessionPublic & {
   resumeHandle?: string;
@@ -20,6 +21,7 @@ type StoredSession = LogicalSessionPublic & {
 
 const defaultSettings: StoredSettings = {
   selectedVoiceName: DEFAULT_VOICE_NAME,
+  selectedVoicePitch: DEFAULT_VOICE_PITCH,
   selectedModelId: DEFAULT_LIVE_MODEL,
   selectedCharacterId: "greus-greeny",
   microphoneId: "default",
@@ -67,6 +69,12 @@ export function readStoredSettings(): StoredSettings {
   const supportedModel = coerceConversationalLiveModel(settings.selectedModelId);
   if (supportedModel !== settings.selectedModelId) {
     migrated = { ...migrated, selectedModelId: supportedModel };
+    changed = true;
+  }
+
+  const normalizedPitch = normalizeVoicePitch(settings.selectedVoicePitch);
+  if (normalizedPitch !== settings.selectedVoicePitch) {
+    migrated = { ...migrated, selectedVoicePitch: normalizedPitch };
     changed = true;
   }
 
@@ -137,11 +145,13 @@ export function installMobileBridge(): void {
           writeJson(sessionKey(request.characterId), { ...session, updatedAt: Date.now() });
         }
         const apiKey = readStoredApiKey();
+        const settings = readStoredSettings();
         return apiRequest("/api/live-token", {
           method: "POST",
           body: JSON.stringify({
             characterId: request.characterId,
             voiceName: request.voiceName,
+            voicePitch: request.voicePitch ?? settings.selectedVoicePitch,
             modelId: request.modelId,
             apiKey,
             resumeHandle: session.resumeHandle,
@@ -181,13 +191,16 @@ export function installMobileBridge(): void {
         const next: StoredSettings = {
           ...current,
           selectedVoiceName: typeof patch.voiceName === "string" ? patch.voiceName : current.selectedVoiceName,
+          selectedVoicePitch: patch.voicePitch !== undefined ? normalizeVoicePitch(patch.voicePitch) : current.selectedVoicePitch,
           selectedModelId: typeof patch.modelId === "string" ? coerceConversationalLiveModel(patch.modelId) : current.selectedModelId,
           selectedCharacterId: typeof patch.characterId === "string" ? patch.characterId : current.selectedCharacterId,
           microphoneId: typeof patch.microphoneId === "string" ? patch.microphoneId : current.microphoneId,
           speakerId: typeof patch.speakerId === "string" ? patch.speakerId : current.speakerId,
           transcriptEnabled: typeof patch.transcriptEnabled === "boolean" ? patch.transcriptEnabled : current.transcriptEnabled,
         };
+        const pitchChanged = next.selectedVoicePitch !== current.selectedVoicePitch;
         writeJson(SETTINGS_KEY, next);
+        if (pitchChanged) clearResumeState();
         return { ok: true };
       },
     },

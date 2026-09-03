@@ -6,6 +6,7 @@ import {
   GEMINI_31_TTS_MODEL, isConversationalLiveModel, isGemini25LiveModel, isGemini31ExpressiveTtsMode,
   isGemini31NativeYouthfulMode, normalizeLiveModelId, resolveLiveModelId,
 } from "../src/core/gemini/catalog.js";
+import { normalizeVoicePitch, voicePitchSystemInstruction } from "../src/core/gemini/voicePitch.js";
 
 const KOREAN_LANGUAGE_CODE = "ko-KR";
 const REALTIME_INPUT_CONFIG = {
@@ -83,6 +84,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const externalTts = isGemini31ExpressiveTtsMode(requestedModelId);
     const youthfulNative = isGemini31NativeYouthfulMode(requestedModelId);
     const modelId = resolveLiveModelId(requestedModelId);
+    const voicePitch = normalizeVoicePitch(body.voicePitch);
     const clientApiKey = normalizeClientApiKey(body.apiKey);
     const client = await createClient(clientApiKey);
     if (!await modelAvailableForConversation(client, modelId)) {
@@ -113,11 +115,13 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       expressionToolAvailable,
       youthfulNative ? "animated-mascot" : "default",
     );
-    const systemInstruction = externalTts
+    const modeInstruction = externalTts
       ? expressiveTtsSystemInstruction(baseInstruction)
       : youthfulNative
         ? youthfulNativeSystemInstruction(baseInstruction)
         : baseInstruction;
+    const pitchInstruction = !is25 ? voicePitchSystemInstruction(voicePitch) : "";
+    const systemInstruction = pitchInstruction ? `${modeInstruction}\n\n${pitchInstruction}` : modeInstruction;
     const constrainedConfig: Record<string, unknown> = {
       responseModalities: ["AUDIO"],
       speechConfig: speechConfig(modelId, body.voiceName),

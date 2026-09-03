@@ -6,6 +6,7 @@ import {
 } from "./_shared.js";
 import { GEMINI_31_TTS_MODEL } from "../src/core/gemini/catalog.js";
 import { buildCharacterTtsPrompt, MAX_EXPRESSIVE_TTS_TEXT_LENGTH } from "../src/core/gemini/ttsVoiceDirector.js";
+import { normalizeVoicePitch } from "../src/core/gemini/voicePitch.js";
 import { EMOTION_IDS, type EmotionId } from "../src/core/types.js";
 
 type StreamingApiResponse = ApiResponse & {
@@ -57,8 +58,9 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     }
 
     const intensity = Math.max(0, Math.min(1, Number(body.intensity ?? 0.7)));
+    const voicePitch = normalizeVoicePitch(body.voicePitch);
     const client = await createClient(normalizeClientApiKey(body.apiKey));
-    const input = buildCharacterTtsPrompt(text, body.emotion, Number.isFinite(intensity) ? intensity : 0.7);
+    const input = buildCharacterTtsPrompt(text, body.emotion, Number.isFinite(intensity) ? intensity : 0.7, voicePitch);
 
     let bytesWritten = 0;
     let responseStarted = false;

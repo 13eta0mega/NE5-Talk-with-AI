@@ -1,6 +1,8 @@
 import type { EmotionId } from "../types";
+import { normalizeVoicePitch } from "./voicePitch";
 
 const BROWSER_API_KEY_STORAGE_KEY = "deskpet:mobile-gemini-api-key:v1";
+const BROWSER_SETTINGS_STORAGE_KEY = "deskpet:mobile-settings:v1";
 
 export interface ExpressiveTtsRequest {
   text: string;
@@ -21,6 +23,17 @@ function browserApiKey(): string | undefined {
   return value || undefined;
 }
 
+function browserVoicePitch(): number {
+  if (typeof localStorage === "undefined") return 0;
+  try {
+    const raw = localStorage.getItem(BROWSER_SETTINGS_STORAGE_KEY);
+    const value = raw ? (JSON.parse(raw) as { selectedVoicePitch?: unknown }).selectedVoicePitch : 0;
+    return normalizeVoicePitch(value);
+  } catch {
+    return 0;
+  }
+}
+
 function appendBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
   if (!left.length) return right;
   const merged = new Uint8Array(left.length + right.length);
@@ -36,6 +49,7 @@ export class GeminiTtsAdapter implements TtsStreamer {
   constructor(
     private readonly fetcher: typeof fetch = fetch,
     private readonly apiKeyProvider: () => string | undefined = browserApiKey,
+    private readonly voicePitchProvider: () => number = browserVoicePitch,
   ) {}
 
   cancel(): void {
@@ -58,7 +72,7 @@ export class GeminiTtsAdapter implements TtsStreamer {
         credentials: "same-origin",
         cache: "no-store",
         signal: controller.signal,
-        body: JSON.stringify({ ...request, apiKey: this.apiKeyProvider() }),
+        body: JSON.stringify({ ...request, voicePitch: this.voicePitchProvider(), apiKey: this.apiKeyProvider() }),
       });
     } catch (error) {
       if (controller.signal.aborted || epoch !== this.requestEpoch) return;

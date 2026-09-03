@@ -21,9 +21,13 @@ type PlaybackWorkletMessage =
 
 export const ANDROID_AUDIO_MODE_SETTLE_MS = 260;
 export const PLAYBACK_SAMPLE_RATE = 24000;
-export const AUDIO_WORKLET_VERSION = "20260903-1";
+export const AUDIO_WORKLET_VERSION = "20260904-jitter-1";
 export const CAPTURE_HEARTBEAT_FRESH_MS = 700;
 export const PLAYBACK_DRAIN_TIMEOUT_MS = 30000;
+export const ANDROID_PLAYBACK_INITIAL_BUFFER_MS = 220;
+export const ANDROID_PLAYBACK_REBUFFER_MS = 140;
+export const DEFAULT_PLAYBACK_INITIAL_BUFFER_MS = 100;
+export const DEFAULT_PLAYBACK_REBUFFER_MS = 70;
 export const toBrowserSinkId = (deviceId: string): string => deviceId === "default" ? "" : deviceId;
 
 function versionedWorkletUrl(fileName: string): string {
@@ -119,8 +123,13 @@ export class AudioEngine {
 
     try {
       await context.audioWorklet.addModule(versionedWorkletUrl("playback-processor.js"));
+      const android = this.needsAndroidAudioModeReset;
       const node = new AudioWorkletNode(context, "deskpet-playback", {
-        processorOptions: { inputSampleRate: PLAYBACK_SAMPLE_RATE },
+        processorOptions: {
+          inputSampleRate: PLAYBACK_SAMPLE_RATE,
+          initialBufferMs: android ? ANDROID_PLAYBACK_INITIAL_BUFFER_MS : DEFAULT_PLAYBACK_INITIAL_BUFFER_MS,
+          rebufferMs: android ? ANDROID_PLAYBACK_REBUFFER_MS : DEFAULT_PLAYBACK_REBUFFER_MS,
+        },
       });
       node.port.onmessage = (event: MessageEvent<PlaybackWorkletMessage>) => {
         if (event.data.type === "level") {

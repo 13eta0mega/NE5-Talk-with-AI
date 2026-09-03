@@ -14,11 +14,6 @@ type StreamingApiResponse = ApiResponse & {
   headersSent?: boolean;
 };
 
-type AudioDeltaEvent = {
-  event_type?: string;
-  delta?: { type?: string; data?: string };
-};
-
 function isEmotionId(value: unknown): value is EmotionId {
   return typeof value === "string" && (EMOTION_IDS as readonly string[]).includes(value);
 }
@@ -50,15 +45,20 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const client = await createClient(normalizeClientApiKey(body.apiKey));
     const input = buildCharacterTtsPrompt(text, body.emotion, Number.isFinite(intensity) ? intensity : 0.7);
 
-    const stream = await client.interactions.create({
+    // @google/genai 2.18 already exposes generateContentStream and Google documents
+    // raw TTS chunks from this path as 24 kHz, mono, signed 16-bit PCM.
+    const stream = await client.models.generateContentStream({
       model: GEMINI_31_TTS_MODEL,
-      input,
-      response_format: { type: "audio" },
-      generation_config: {
-        speech_config: [{ voice: body.voiceName }],
+      contents: [{ parts: [{ text: input }] }],
+      config: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: body.voiceName },
+          },
+        },
       },
-      stream: true,
-    } as never) as AsyncIterable<AudioDeltaEvent>;
+    });
 
     response.setHeader("Content-Type", "audio/pcm;rate=24000");
     response.setHeader("X-Audio-Sample-Rate", "24000");
@@ -66,9 +66,10 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     response.setHeader("X-Audio-Format", "s16le");
 
     let bytesWritten = 0;
-    for await (const event of stream) {
-      if (event.event_type !== "step.delta" || event.delta?.type !== "audio" || typeof event.delta.data !== "string") continue;
-      const audio = Buffer.from(event.delta.data, "base64");
+    for await (const chunk of stream) {
+      const data = chunk.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!data) continue;
+      const audio = Buffer.from(data, "base64");
       if (!audio.length) continue;
       bytesWritten += audio.length;
       streamingResponse.write(audio);

@@ -19,22 +19,9 @@ export const CHARACTER_VOICE_PROFILE_VERSION = 2;
 
 export const GEMINI_31_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 export const GEMINI_31_TTS_MODEL = "gemini-3.1-flash-tts-preview";
-
-// Virtual selectable mode. It still uses the exact same Gemini 3.1 Flash Live
-// native AUDIO socket, but applies a stronger youthful/emotional voice-performance
-// instruction. No separate TTS request is used, so latency and turn reliability stay
-// on the normal Live path. Leda is the recommended preset because Google describes
-// that voice as "Youthful".
 export const GEMINI_31_NATIVE_YOUTHFUL_MODE = "gemini-3.1-flash-live-preview-youthful-expressive";
-
-// Virtual selectable mode. The Live socket itself still produces native AUDIO so
-// outputAudioTranscription can be used as the script for the separate 3.1 Flash TTS.
 export const GEMINI_31_EXPRESSIVE_TTS_MODE = "gemini-3.1-flash-live-preview-with-expressive-tts";
 
-// Preferred ordering only. This is deliberately NOT an allowlist anymore.
-// Google can publish newer Native Audio / conversational Live model IDs or
-// aliases without requiring an app update. The server verifies actual model
-// availability through models.list() before minting a Live token.
 export const CONVERSATIONAL_LIVE_MODELS = [
   GEMINI_31_LIVE_MODEL,
   "gemini-2.5-flash-native-audio-preview-12-2025",
@@ -62,13 +49,19 @@ export function resolveLiveModelId(value: unknown): string {
     : normalizeLiveModelId(value);
 }
 
+/**
+ * Client-side plausibility check only. Actual Live capability is determined from
+ * models.list().supportedActions on the server. Do not require "live" to appear
+ * in a model ID: Google can publish new Bidi-capable conversational model names
+ * without another app release.
+ */
 export function isConversationalLiveModel(value: unknown): boolean {
   const id = normalizeLiveModelId(value).toLowerCase();
   if (id === GEMINI_31_EXPRESSIVE_TTS_MODE || id === GEMINI_31_NATIVE_YOUTHFUL_MODE) return true;
   if (!id || !id.startsWith("gemini-")) return false;
   if (id.includes("embedding") || id.includes("transcribe") || id.includes("translate") || id.includes("tts")) return false;
   if (id.startsWith("gemini-2.0-") || id === "gemini-live-2.5-flash-preview") return false;
-  return id.includes("live") || id.includes("native-audio");
+  return true;
 }
 
 export function coerceConversationalLiveModel(value: unknown): ConversationalLiveModelId {

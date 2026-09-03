@@ -42,12 +42,13 @@ describe("Gemini Live audio messages", () => {
     expect(serverSource).not.toContain('apiVersion: "v1alpha"');
   });
 
-  it("accepts future conversational Live IDs while rejecting non-conversation models", async () => {
+  it("accepts every plausible Bidi Gemini model while rejecting specialized non-conversation models", async () => {
     expect(CONVERSATIONAL_LIVE_MODELS).toContain("gemini-3.1-flash-live-preview");
     expect(isConversationalLiveModel("models/gemini-2.5-flash-native-audio-preview-12-2025")).toBe(true);
     expect(isGemini25LiveModel("models/gemini-2.5-flash-native-audio-preview-12-2025")).toBe(true);
     expect(isConversationalLiveModel("gemini-3.2-flash-live-preview")).toBe(true);
     expect(isConversationalLiveModel("gemini-3.2-flash-live-latest")).toBe(true);
+    expect(isConversationalLiveModel("gemini-4-flash-preview")).toBe(true);
     expect(coerceConversationalLiveModel("gemini-3.2-flash-live-latest")).toBe("gemini-3.2-flash-live-latest");
     expect(isConversationalLiveModel("gemini-3.5-transcribe-live")).toBe(false);
     expect(isConversationalLiveModel("gemini-3.5-live-translate-preview")).toBe(false);
@@ -62,7 +63,7 @@ describe("Gemini Live audio messages", () => {
     expect(tokenSource).toContain("client.models.list");
   });
 
-  it("uses a lean 2.5 Native Audio config and sensitive speech-start detection", async () => {
+  it("uses a lean 2.5 Native Audio config and pause-tolerant speech detection", async () => {
     const adapterSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const tokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     for (const source of [adapterSource, tokenSource]) {
@@ -72,7 +73,7 @@ describe("Gemini Live audio messages", () => {
       expect(source).toContain('startOfSpeechSensitivity: "START_SENSITIVITY_HIGH"');
       expect(source).toContain('endOfSpeechSensitivity: "END_SENSITIVITY_HIGH"');
       expect(source).toContain("prefixPaddingMs: 120");
-      expect(source).toContain("silenceDurationMs: 650");
+      expect(source).toContain("silenceDurationMs: 900");
       expect(source).toContain("thinkingBudget: 0");
       expect(source).toContain("contextWindowCompression");
     }
@@ -102,10 +103,12 @@ describe("Gemini Live audio messages", () => {
     expect(source).toContain('this.emit({ type: "connected"');
   });
 
-  it("sends chat text as ordered client content and guards readiness", async () => {
+  it("routes 2.5 chat through client content and newer Live chat through realtime input", async () => {
     const source = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     expect(source).toContain("get isReady(): boolean");
-    expect(source).toContain('sendClientContent({ turns: text, turnComplete: true })');
+    expect(source).toContain('this.session.sendClientContent({ turns: text, turnComplete: true })');
+    expect(source).toContain('this.session.sendRealtimeInput({ text })');
+    expect(source).toContain("if (isGemini25LiveModel(this.activeModelId))");
     expect(source).toContain("if (!this.isReady)");
   });
 

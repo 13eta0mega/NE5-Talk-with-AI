@@ -38,8 +38,8 @@ describe("Gemini 2.5 Live stability profile", () => {
 
   it("shows the actual terminal error instead of only the generic pause label", async () => {
     const app = await readFile(path.resolve("src/renderer/App.tsx"), "utf8");
-    expect(app).toContain('phase === "error" && snapshot.error');
-    expect(app).toContain('phase !== "error" && transcriptEnabled');
+    expect(app).toContain('["error", "reconnecting"].includes(phase) && snapshot.error');
+    expect(app).toContain('!["error", "reconnecting"].includes(phase) && transcriptEnabled');
   });
 
   it("uses a lean 2.5 profile while keeping session resumption", async () => {

@@ -32,6 +32,9 @@ export function ChatPanel({
     try {
       await onSend(text);
       setValue("");
+    } catch {
+      // App owns the user-facing error notice. Keep the draft for an explicit retry
+      // and absorb the rejection so click/Enter handlers do not leak it globally.
     } finally {
       setSending(false);
     }

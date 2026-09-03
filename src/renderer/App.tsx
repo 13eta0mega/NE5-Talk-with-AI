@@ -213,7 +213,7 @@ export default function App() {
   const toggleMic = async () => {
     try {
       if (snapshot.phase === "listening") coordinator.stopListening();
-      else if (["idle", "thinking"].includes(snapshot.phase)) await coordinator.startListening(microphoneId);
+      else if (snapshot.phase === "idle") await coordinator.startListening(microphoneId);
       else if (["disconnected", "error"].includes(snapshot.phase)) await connectLive();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "마이크를 시작하지 못했습니다.");
@@ -329,7 +329,7 @@ export default function App() {
           </div>
           <div className="audio-wave" aria-hidden="true">{Array.from({ length: 17 }, (_, index) => <i key={index} style={{ height: `${8 + ((phase === "speaking" ? mouthLevel : inputLevel) * (16 + (index % 5) * 8))}px` }} />)}</div>
           <button className="chat-shortcut" onClick={() => setChatOpen(true)} aria-label="텍스트 채팅">⌨</button>
-          <button className={`mic-button ${phase} ${micReady ? "ready" : ""}`} onClick={toggleMic} disabled={["connecting", "reconnecting", "speaking"].includes(phase)} aria-label={micReady ? "마이크 입력 가능, 듣기 멈춤" : phase === "listening" ? "듣기 멈춤" : "대화 시작"} title={micReady ? "지금 말해도 돼" : undefined}>
+          <button className={`mic-button ${phase} ${micReady ? "ready" : ""}`} onClick={toggleMic} disabled={["connecting", "reconnecting", "thinking", "speaking"].includes(phase)} aria-label={micReady ? "마이크 입력 가능, 듣기 멈춤" : phase === "listening" ? "듣기 멈춤" : "대화 시작"} title={micReady ? "지금 말해도 돼" : undefined}>
             <span>{phase === "listening" ? "■" : "●"}</span>
           </button>
         </section>

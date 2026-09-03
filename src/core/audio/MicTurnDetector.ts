@@ -2,7 +2,7 @@ export const MIC_LOCAL_MIN_SPEECH_MS = 100;
 export const MIC_LOCAL_END_SILENCE_MS = 1200;
 export const MIC_LOCAL_START_CONFIRM_MS = 60;
 
-export type MicTurnSignal = "speech-start" | "speech-end";
+export type MicTurnSignal = "speech-start";
 
 export interface MicTurnDiagnostics {
   speaking: boolean;
@@ -23,10 +23,11 @@ function pcmRms(pcm: Int16Array): number {
 }
 
 /**
- * Lightweight client-side speech activity detector used alongside Gemini server
- * VAD. Server VAD owns conversational turn completion. The long local speech-end
- * threshold is diagnostic/fallback state only and must never terminate a normal
- * continuous microphone turn on a short mid-sentence pause.
+ * Lightweight client-side speech activity detector used only for diagnostics and
+ * immediate speech-start bookkeeping. Gemini server VAD owns conversational turn
+ * completion. In particular, local RMS silence must never send audioStreamEnd or
+ * move the UI into thinking, because phone/PC background noise can create a false
+ * speech-start followed by silence even when the user never spoke.
  */
 export class MicTurnDetector {
   private noiseFloor = 0.0025;
@@ -69,18 +70,12 @@ export class MicTurnDetector {
 
     this.speechMs += chunkMs;
     const endThreshold = Math.max(0.005, Math.min(0.025, this.noiseFloor * 1.8 + 0.001));
-    if (rms < endThreshold) {
-      this.silenceMs += chunkMs;
-      if (this.speechMs >= MIC_LOCAL_MIN_SPEECH_MS && this.silenceMs >= MIC_LOCAL_END_SILENCE_MS) {
-        this.speaking = false;
-        this.candidateSpeechMs = 0;
-        this.speechMs = 0;
-        this.silenceMs = 0;
-        return "speech-end";
-      }
-    } else {
-      this.silenceMs = 0;
-    }
+    if (rms < endThreshold) this.silenceMs += chunkMs;
+    else this.silenceMs = 0;
+
+    // Do not emit a local speech-end. Server VAD is authoritative for Live API
+    // turn boundaries; this state is retained only for diagnostics until reset by
+    // a server response/playback or an explicit user action.
     return undefined;
   }
 

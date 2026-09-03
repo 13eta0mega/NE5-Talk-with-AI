@@ -55,7 +55,7 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(sentBody.apiKey).toBe("test-api-key-value-long-enough-123456");
   });
 
-  it("discards required native Live audio and converts its output transcription into separate TTS PCM", async () => {
+  it("mutes native Live audio when separate expressive TTS succeeds", async () => {
     const requests: ExpressiveTtsRequest[] = [];
     const fakeTts: TtsStreamer = {
       cancel() {},
@@ -80,9 +80,6 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
       },
     }, "greus-greeny", "Leda", GEMINI_31_EXPRESSIVE_TTS_MODE);
 
-    // Finalization is invoked directly here so this unit stays independent of a
-    // browser timer while still verifying native Live PCM suppression and the
-    // output-transcription -> separate-TTS conversion path.
     expect(requests).toHaveLength(0);
     internal.finalizeExternalTtsTurn();
     await Promise.resolve();
@@ -101,7 +98,39 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect([...audioEvents[0].pcm]).toEqual([101, -202, 303]);
   });
 
-  it("uses supported Live AUDIO plus output transcription instead of the rejected TEXT modality", async () => {
+  it("replays buffered native Live audio instead of silence when expressive TTS fails before PCM", async () => {
+    const fakeTts: TtsStreamer = {
+      cancel() {},
+      async stream() { throw new Error("synthetic TTS failure"); },
+    };
+    const adapter = new GeminiLiveAdapter(fakeTts);
+    const internal = adapter as any;
+    internal.externalTtsMode = true;
+    internal.activeModelId = GEMINI_31_LIVE_MODEL;
+    internal.currentCharacterId = "greus-greeny";
+    internal.currentVoiceName = "Leda";
+    const events: ProviderEvent[] = [];
+    adapter.onEvent((event) => events.push(event));
+
+    internal.handleMessage({
+      serverContent: {
+        modelTurn: { parts: [{ inlineData: { data: "AQACAA==" } }] },
+        outputTranscription: { text: "대체 재생 테스트" },
+      },
+    }, "greus-greeny", "Leda", GEMINI_31_EXPRESSIVE_TTS_MODE);
+    internal.finalizeExternalTtsTurn();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const audioEvents = events.filter((event): event is Extract<ProviderEvent, { type: "audio" }> => event.type === "audio");
+    expect(audioEvents).toHaveLength(1);
+    expect([...audioEvents[0].pcm]).toEqual([1, 2]);
+    const ttsError = events.find((event): event is Extract<ProviderEvent, { type: "tts-error" }> => event.type === "tts-error");
+    expect(ttsError?.message).toContain("Live 기본 음성으로 대체 재생했습니다");
+    expect(events.map((event) => event.type)).toContain("turn-complete");
+  });
+
+  it("uses supported Live AUDIO plus output transcription and resilient TTS delivery", async () => {
     const liveModelsSource = await readFile(path.resolve("api/live-models.ts"), "utf8");
     const liveTokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     const ttsSource = await readFile(path.resolve("api/tts-stream.ts"), "utf8");
@@ -117,9 +146,12 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(liveSource).toContain("outputAudioTranscription: transcription");
     expect(liveSource).not.toContain("Modality.TEXT");
     expect(liveSource).toContain("outputTranscription?.text");
-    expect(liveSource).toContain("if (this.externalTtsMode) continue");
+    expect(liveSource).toContain("bufferExternalTtsFallbackAudio");
+    expect(liveSource).toContain("emitExternalTtsFallbackAudio");
     expect(liveSource).toContain("externalTtsFinalizePending");
     expect(ttsSource).toContain("client.models.generateContentStream");
+    expect(ttsSource).toContain("client.models.generateContent({");
+    expect(ttsSource).toContain("generate-content-fallback");
     expect(ttsSource).toContain('responseModalities: ["AUDIO"]');
     expect(ttsSource).toContain("prebuiltVoiceConfig: { voiceName: body.voiceName }");
     expect(ttsSource).toContain('"audio/pcm;rate=24000"');

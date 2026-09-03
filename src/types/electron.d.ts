@@ -4,7 +4,7 @@ declare global {
   interface Window {
     deskPet?: {
       auth: {
-        createLiveToken(request: { characterId: string; voiceName: string; modelId: string; freshSession?: boolean }): Promise<{
+        createLiveToken(request: { characterId: string; voiceName: string; voicePitch?: number; modelId: string; freshSession?: boolean }): Promise<{
           token: string;
           model: string;
           expiresAt: number;
@@ -16,7 +16,7 @@ declare global {
         saveApiKey(value: string): Promise<{ ok: true }>;
         clearApiKey(): Promise<{ ok: true }>;
         savePreferences(value: {
-          voiceName?: string; modelId?: string; characterId?: string; microphoneId?: string;
+          voiceName?: string; voicePitch?: number; modelId?: string; characterId?: string; microphoneId?: string;
           speakerId?: string; transcriptEnabled?: boolean;
         }): Promise<{ ok: true }>;
       };

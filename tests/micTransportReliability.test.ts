@@ -14,35 +14,45 @@ function pcm(amplitude: number, samples = 320): Int16Array {
 }
 
 describe("Gemini Live microphone transport reliability", () => {
-  it("uses sensitive server VAD without reducing the no-interruption guard", async () => {
+  it("gives Gemini server VAD enough time for natural Korean pauses", async () => {
     const adapter = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
     const token = await readFile(path.resolve("api/live-token.ts"), "utf8");
     for (const source of [adapter, token]) {
       expect(source).toContain('activityHandling: "NO_INTERRUPTION"');
       expect(source).toContain('startOfSpeechSensitivity: "START_SENSITIVITY_HIGH"');
       expect(source).toContain("prefixPaddingMs: 120");
-      expect(source).toContain("silenceDurationMs: 650");
+      expect(source).toContain("silenceDurationMs: 900");
     }
   });
 
-  it("detects local speech end before the server VAD timeout for hybrid VAD", () => {
-    expect(MIC_LOCAL_END_SILENCE_MS).toBeLessThan(650);
+  it("never lets local VAD end speech before the 900ms server VAD window", () => {
+    expect(MIC_LOCAL_END_SILENCE_MS).toBeGreaterThan(900);
     const detector = new MicTurnDetector();
     let startSeen = false;
-    let endSeen = false;
+    let endBeforeServerWindow = false;
 
     for (let i = 0; i < 10; i += 1) {
       if (detector.feed(pcm(0.08)) === "speech-start") startSeen = true;
     }
-    for (let i = 0; i < 30; i += 1) {
-      if (detector.feed(pcm(0)) === "speech-end") endSeen = true;
+    for (let i = 0; i < 45; i += 1) {
+      if (detector.feed(pcm(0)) === "speech-end") endBeforeServerWindow = true;
     }
 
     expect(startSeen).toBe(true);
+    expect(endBeforeServerWindow).toBe(false);
+  });
+
+  it("still provides a long-silence local fallback after the server window", () => {
+    const detector = new MicTurnDetector();
+    for (let i = 0; i < 10; i += 1) detector.feed(pcm(0.08));
+    let endSeen = false;
+    for (let i = 0; i < 70; i += 1) {
+      if (detector.feed(pcm(0)) === "speech-end") endSeen = true;
+    }
     expect(endSeen).toBe(true);
   });
 
-  it("flushes Gemini input on local speech end and whenever playback takes ownership", async () => {
+  it("ends realtime input when a true local fallback or playback ownership occurs", async () => {
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     expect(coordinator).toContain('signal === "speech-end"');
     expect(coordinator).toContain("this.provider.endInputAudio()");

@@ -1,8 +1,16 @@
-const CACHE_NAME = "deskpet-shell-v2";
-const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/characters/pet-orbit-bot.svg"];
+const CACHE_NAME = "deskpet-shell-v3";
+const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icons/deskpet.svg"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => Promise.all(SHELL.map(async (path) => {
+        const response = await fetch(path, { cache: "reload" });
+        if (!response.ok) throw new Error(`Required app shell asset failed: ${path} (${response.status})`);
+        await cache.put(path, response);
+      })))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener("activate", (event) => {

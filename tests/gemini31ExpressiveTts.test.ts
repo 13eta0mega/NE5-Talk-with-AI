@@ -46,7 +46,7 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
         status: 200,
         headers: {
           "Content-Type": "audio/pcm;rate=24000",
-          "X-TTS-Delivery": "interactions-stream",
+          "X-TTS-Delivery": "generate-content-stream",
           "X-Audio-Sample-Rate": "24000",
         },
       });
@@ -137,7 +137,7 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(events.map((event) => event.type)).toContain("turn-complete");
   });
 
-  it("uses current Interactions streaming TTS with bounded compatibility fallbacks", async () => {
+  it("uses Generate Content streaming TTS with a non-streaming fallback", async () => {
     const liveModelsSource = await readFile(path.resolve("api/live-models.ts"), "utf8");
     const liveTokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     const ttsSource = await readFile(path.resolve("api/tts-stream.ts"), "utf8");
@@ -158,16 +158,13 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(liveSource).toContain("emitExternalTtsFallbackAudio");
     expect(liveSource).toContain("externalTtsFinalizePending");
 
-    expect(ttsSource).toContain("interactions?.create");
-    expect(ttsSource).toContain('response_format: { type: "audio" }');
-    expect(ttsSource).toContain('speech_config: [{ voice: body.voiceName, language: "ko-KR" }]');
-    expect(ttsSource).toContain("store: false");
-    expect(ttsSource).toContain("stream: true");
-    expect(ttsSource).toContain("interactions-stream");
-    expect(ttsSource).toContain("interactions-fallback");
+    expect(ttsSource).toContain("client.models.generateContentStream({");
     expect(ttsSource).toContain("client.models.generateContent({");
-    expect(ttsSource).not.toContain("client.models.generateContentStream");
+    expect(ttsSource).not.toContain("interactions?.create");
+    expect(ttsSource).toContain("generate-content-stream");
     expect(ttsSource).toContain("generate-content-fallback");
+    expect(ttsSource).toContain('responseModalities: ["AUDIO"]');
+    expect(ttsSource).toContain("prebuiltVoiceConfig");
     expect(ttsSource).toContain('"audio/pcm;rate=24000"');
     expect(ttsClientSource).toContain('response.headers.get("X-TTS-Delivery")');
     expect(ttsClientSource).toContain('event: "audio-complete"');

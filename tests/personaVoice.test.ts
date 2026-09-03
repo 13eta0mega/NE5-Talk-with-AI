@@ -19,4 +19,12 @@ describe("GreenCat voice direction", () => {
     expect(prompt).toContain("# Continuity Memory");
     expect(prompt).toContain("그대로 읽어주지 않는다");
   });
+
+  it("adds short complete-sentence guidance for 2.5 Native Audio sessions", () => {
+    const prompt = buildSystemInstruction("greus-greeny", undefined, false);
+    expect(prompt).toContain("# Native Audio Reliability");
+    expect(prompt).toContain("짧고 완결된 문장");
+    expect(prompt).toContain("마지막 음성 문장은 반드시");
+    expect(prompt).not.toContain("# Expression Coordination");
+  });
 });

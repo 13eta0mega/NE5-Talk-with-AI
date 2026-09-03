@@ -48,6 +48,7 @@ export interface SecureSettingsPublic {
   apiKeyEditable?: boolean;
   encryptionAvailable: boolean;
   selectedVoiceName: VoiceName;
+  selectedVoicePitch: number;
   selectedModelId: string;
   selectedCharacterId: string;
   microphoneId: string;

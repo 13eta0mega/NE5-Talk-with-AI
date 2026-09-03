@@ -259,10 +259,19 @@ export class GeminiLiveAdapter {
       this.emit({ type: "output-transcript", text: outputText });
       this.emitInferredExpression(outputText);
     }
-    if (serverContent?.waitingForInput) this.emit({ type: "waiting-for-input" });
-    if (serverContent?.generationComplete) this.emit({ type: "generation-complete" });
-    if (serverContent?.turnComplete) this.emit({ type: "turn-complete" });
-    if (serverContent?.interrupted) this.emit({ type: "interrupted" });
+
+    // A Live server message can carry interrupted together with completion flags.
+    // Interrupted means the current model turn was cancelled, so processing a
+    // turnComplete first can commit/drain stale audio and reopen the microphone in
+    // the middle of that cancelled turn. Give interruption strict precedence and
+    // suppress completion/waiting events from the same message.
+    if (serverContent?.interrupted) {
+      this.emit({ type: "interrupted" });
+    } else {
+      if (serverContent?.waitingForInput) this.emit({ type: "waiting-for-input" });
+      if (serverContent?.generationComplete) this.emit({ type: "generation-complete" });
+      if (serverContent?.turnComplete) this.emit({ type: "turn-complete" });
+    }
 
     const resume = message.sessionResumptionUpdate;
     if (resume?.resumable && resume.newHandle) {

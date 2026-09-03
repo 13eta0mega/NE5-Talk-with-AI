@@ -2,7 +2,7 @@ export const MIC_LOCAL_MIN_SPEECH_MS = 100;
 export const MIC_LOCAL_END_SILENCE_MS = 1200;
 export const MIC_LOCAL_START_CONFIRM_MS = 60;
 
-export type MicTurnSignal = "speech-start";
+export type MicTurnSignal = "speech-start" | "speech-end";
 
 export interface MicTurnDiagnostics {
   speaking: boolean;
@@ -73,9 +73,9 @@ export class MicTurnDetector {
     if (rms < endThreshold) this.silenceMs += chunkMs;
     else this.silenceMs = 0;
 
-    // Do not emit a local speech-end. Server VAD is authoritative for Live API
-    // turn boundaries; this state is retained only for diagnostics until reset by
-    // a server response/playback or an explicit user action.
+    // Deliberately never return "speech-end". Keep it in the public signal type
+    // for compatibility with older coordinator code, while server VAD remains the
+    // only authority that may end a Live microphone turn.
     return undefined;
   }
 

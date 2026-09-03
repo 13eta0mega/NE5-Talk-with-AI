@@ -10,7 +10,15 @@ const nativeDesktopBridge = Boolean(window.deskPet);
 installMobileBridge();
 
 if ("serviceWorker" in navigator && !nativeDesktopBridge) {
-  window.addEventListener("load", () => void navigator.serviceWorker.register("./sw.js"));
+  let refreshingForServiceWorker = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshingForServiceWorker) return;
+    refreshingForServiceWorker = true;
+    window.location.reload();
+  });
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("./sw.js").then((registration) => registration.update());
+  });
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

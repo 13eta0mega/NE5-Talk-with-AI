@@ -12,7 +12,7 @@
   "theme_color": "#2b2833",
   "icons": [
     {
-      "src": "/characters/pet-orbit-bot.svg",
+      "src": "/icons/deskpet.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

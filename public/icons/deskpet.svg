@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="DeskPet orbit cat icon">
+  <rect width="512" height="512" rx="112" fill="#f4f1ff"/>
+  <circle cx="256" cy="278" r="142" fill="#7057d9"/>
+  <path d="M145 190 174 98l78 72M367 190 338 98l-78 72" fill="#7057d9" stroke="#7057d9" stroke-width="20" stroke-linejoin="round"/>
+  <path d="m165 166 17-49 40 38M347 166l-17-49-40 38" fill="#c9bcff"/>
+  <ellipse cx="205" cy="266" rx="18" ry="24" fill="#221b3a"/>
+  <ellipse cx="307" cy="266" rx="18" ry="24" fill="#221b3a"/>
+  <path d="M238 316q18 20 36 0" fill="none" stroke="#221b3a" stroke-width="14" stroke-linecap="round"/>
+  <path d="M107 344c74 62 224 63 298-1" fill="none" stroke="#f6b73c" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="408" cy="332" r="25" fill="#f6b73c"/>
+</svg>

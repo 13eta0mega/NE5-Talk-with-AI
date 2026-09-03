@@ -40,7 +40,7 @@ describe("real PCM lip sync", () => {
 
   it("does not serve audio worklets cache-first from the PWA service worker", async () => {
     const sw = await readFile(path.resolve("public/sw.js"), "utf8");
-    expect(sw).toContain('CACHE_NAME = "deskpet-shell-v2"');
+    expect(sw).toContain('CACHE_NAME = "deskpet-shell-v3"');
     expect(sw).toContain('url.pathname.startsWith("/worklets/")');
     expect(sw).toContain('fetch(request, { cache: "no-store" })');
   });

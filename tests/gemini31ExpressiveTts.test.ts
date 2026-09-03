@@ -48,7 +48,7 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     const samples: number[] = [];
     await adapter.stream({
       text: "안녕!", characterId: "greus-greeny", voiceName: "Leda", emotion: "happy", intensity: 0.8,
-    }, (pcm) => samples.push(...pcm));
+    }, (pcm) => { samples.push(...pcm); });
     expect(samples).toEqual([1, 2, 3]);
     expect(sentBody.voiceName).toBe("Leda");
     expect(sentBody.emotion).toBe("happy");

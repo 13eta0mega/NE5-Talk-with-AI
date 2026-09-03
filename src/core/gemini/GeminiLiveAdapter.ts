@@ -79,6 +79,7 @@ export class GeminiLiveAdapter {
   private ready = false;
   private goAwayTimer?: number;
   private externalTtsFinalizeTimer?: number;
+  private externalTtsFinalizePending = false;
   private activeModelId = "";
   private currentOutputTranscript = "";
   private inlineCompletionRepairs = 0;
@@ -118,6 +119,7 @@ export class GeminiLiveAdapter {
 
   private cancelExternalTts(): void {
     this.clearExternalTtsFinalizeTimer();
+    this.externalTtsFinalizePending = false;
     this.externalTtsEpoch += 1;
     this.externalTtsActive = false;
     this.tts.cancel();
@@ -127,6 +129,7 @@ export class GeminiLiveAdapter {
     this.currentOutputTranscript = "";
     this.inlineCompletionRepairs = 0;
     this.modelAudioSeen = false;
+    this.externalTtsFinalizePending = false;
   }
 
   private emitInferredExpression(text: string): void {
@@ -182,15 +185,16 @@ export class GeminiLiveAdapter {
     const is25 = isGemini25LiveModel(resolvedModel);
     const transcription = transcriptionConfig(resolvedModel);
     const config: Record<string, unknown> = {
-      responseModalities: [this.externalTtsMode ? Modality.TEXT : Modality.AUDIO],
+      // 3.1 Flash Live rejects a TEXT-only response modality. The hybrid mode
+      // therefore keeps the supported native AUDIO response, suppresses that PCM
+      // client-side, and uses outputAudioTranscription as the separate TTS script.
+      responseModalities: [Modality.AUDIO],
+      speechConfig: speechConfig(resolvedModel, voiceName),
       inputAudioTranscription: transcription,
+      outputAudioTranscription: transcription,
       realtimeInputConfig: REALTIME_INPUT_CONFIG,
       sessionResumption: {},
     };
-    if (!this.externalTtsMode) {
-      config.speechConfig = speechConfig(resolvedModel, voiceName);
-      config.outputAudioTranscription = transcription;
-    }
     if (is25) {
       config.thinkingConfig = { thinkingBudget: 0 };
     } else {
@@ -300,17 +304,21 @@ export class GeminiLiveAdapter {
 
   private scheduleExternalTtsFinalize(): void {
     this.clearExternalTtsFinalizeTimer();
+    this.externalTtsFinalizePending = true;
     this.externalTtsFinalizeTimer = window.setTimeout(() => {
       this.externalTtsFinalizeTimer = undefined;
+      this.externalTtsFinalizePending = false;
       this.finalizeExternalTtsTurn();
     }, EXTERNAL_TTS_FINALIZE_GRACE_MS);
   }
 
   private finalizeExternalTtsTurn(): void {
     this.clearExternalTtsFinalizeTimer();
+    this.externalTtsFinalizePending = false;
     if (!this.externalTtsMode || this.externalTtsActive) return;
     const text = this.currentOutputTranscript.trim();
     if (!text) {
+      this.emit({ type: "tts-error", message: "표현형 TTS 오류: Gemini Live 출력 전사를 받지 못했습니다." });
       this.emit({ type: "generation-complete" });
       this.emit({ type: "turn-complete" });
       this.resetTurnTracking();
@@ -356,6 +364,10 @@ export class GeminiLiveAdapter {
         .map((part: any) => part.inlineData?.data)
         .filter((data: unknown): data is string => typeof data === "string");
     for (const encodedAudio of encodedAudioParts) {
+      // Hybrid mode must ask Live for AUDIO because 3.1 rejects TEXT-only Live
+      // responses. Do not play that native voice; outputAudioTranscription below
+      // is the canonical script that is rendered by Gemini 3.1 Flash TTS.
+      if (this.externalTtsMode) continue;
       const binary = atob(encodedAudio);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
@@ -370,20 +382,15 @@ export class GeminiLiveAdapter {
       this.emit({ type: "input-transcript", text: inputText });
       this.emitInferredExpression(inputText);
     }
-    if (!this.externalTtsMode && outputText) {
+    if (outputText) {
+      const finalizePending = this.externalTtsMode && this.externalTtsFinalizePending;
       this.currentOutputTranscript = mergeStreamingTranscript(this.currentOutputTranscript, outputText);
       this.emit({ type: "output-transcript", text: outputText });
       this.emitInferredExpression(outputText);
-    }
-    if (this.externalTtsMode) {
-      for (const part of modelParts) {
-        const text = typeof part?.text === "string" ? part.text : "";
-        if (!text) continue;
-        this.clearExternalTtsFinalizeTimer();
-        this.currentOutputTranscript = mergeStreamingTranscript(this.currentOutputTranscript, text);
-        this.emit({ type: "output-transcript", text });
-        this.emitInferredExpression(text);
-      }
+      // Some Live events can arrive close to the terminal marker. If a final
+      // transcription fragment lands during the grace window, restart the window
+      // so the separate TTS always receives the complete sentence.
+      if (finalizePending) this.scheduleExternalTtsFinalize();
     }
 
     const calls = message.toolCall?.functionCalls ?? [];
@@ -407,8 +414,9 @@ export class GeminiLiveAdapter {
       this.resetTurnTracking();
       this.emit({ type: "interrupted" });
     } else if (this.externalTtsMode) {
-      if (serverContent?.turnComplete || serverContent?.waitingForInput) this.finalizeExternalTtsTurn();
-      else if (serverContent?.generationComplete) this.scheduleExternalTtsFinalize();
+      if (serverContent?.turnComplete || serverContent?.waitingForInput || serverContent?.generationComplete) {
+        this.scheduleExternalTtsFinalize();
+      }
     } else if (this.shouldRepairInlineTurn(serverContent)) {
       // Gemini 2.5 can emit turnComplete while its own output transcript is clearly
       // mid-sentence. Do not let the coordinator commit/drain/reopen the microphone.

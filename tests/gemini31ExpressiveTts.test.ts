@@ -55,7 +55,7 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(sentBody.apiKey).toBe("test-api-key-value-long-enough-123456");
   });
 
-  it("converts a completed 3.1 Live text turn into TTS PCM before publishing completion", async () => {
+  it("discards required native Live audio and converts its output transcription into separate TTS PCM", async () => {
     const requests: ExpressiveTtsRequest[] = [];
     const fakeTts: TtsStreamer = {
       cancel() {},
@@ -75,10 +75,16 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
 
     internal.handleMessage({
       serverContent: {
-        modelTurn: { parts: [{ text: "우와, 그거 정말 멋지다!" }] },
-        turnComplete: true,
+        modelTurn: { parts: [{ inlineData: { data: "AQACAA==" } }] },
+        outputTranscription: { text: "우와, 그거 정말 멋지다!" },
       },
     }, "greus-greeny", "Leda", GEMINI_31_EXPRESSIVE_TTS_MODE);
+
+    // Finalization is invoked directly here so this unit stays independent of a
+    // browser timer while still verifying native Live PCM suppression and the
+    // output-transcription -> separate-TTS conversion path.
+    expect(requests).toHaveLength(0);
+    internal.finalizeExternalTtsTurn();
     await Promise.resolve();
     await Promise.resolve();
 
@@ -90,11 +96,12 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(types).toContain("audio");
     expect(types.indexOf("audio")).toBeLessThan(types.indexOf("generation-complete"));
     expect(types.indexOf("generation-complete")).toBeLessThan(types.indexOf("turn-complete"));
-    const audio = events.find((event): event is Extract<ProviderEvent, { type: "audio" }> => event.type === "audio");
-    expect(audio && [...audio.pcm]).toEqual([101, -202, 303]);
+    const audioEvents = events.filter((event): event is Extract<ProviderEvent, { type: "audio" }> => event.type === "audio");
+    expect(audioEvents).toHaveLength(1);
+    expect([...audioEvents[0].pcm]).toEqual([101, -202, 303]);
   });
 
-  it("wires selection, constrained text Live mode, and official streaming TTS endpoint", async () => {
+  it("uses supported Live AUDIO plus output transcription instead of the rejected TEXT modality", async () => {
     const liveModelsSource = await readFile(path.resolve("api/live-models.ts"), "utf8");
     const liveTokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     const ttsSource = await readFile(path.resolve("api/tts-stream.ts"), "utf8");
@@ -102,10 +109,16 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
 
     expect(liveModelsSource).toContain("GEMINI_31_EXPRESSIVE_TTS_MODE");
     expect(liveModelsSource).toContain("애니메이션 성우");
-    expect(liveTokenSource).toContain('responseModalities: [externalTts ? "TEXT" : "AUDIO"]');
+    expect(liveTokenSource).toContain('responseModalities: ["AUDIO"]');
+    expect(liveTokenSource).toContain("outputAudioTranscription: transcription");
     expect(liveTokenSource).toContain("expressiveTtsSystemInstruction");
-    expect(liveSource).toContain("Modality.TEXT");
-    expect(liveSource).toContain("finalizeExternalTtsTurn");
+    expect(liveTokenSource).not.toContain('externalTts ? "TEXT" : "AUDIO"');
+    expect(liveSource).toContain("responseModalities: [Modality.AUDIO]");
+    expect(liveSource).toContain("outputAudioTranscription: transcription");
+    expect(liveSource).not.toContain("Modality.TEXT");
+    expect(liveSource).toContain("outputTranscription?.text");
+    expect(liveSource).toContain("if (this.externalTtsMode) continue");
+    expect(liveSource).toContain("externalTtsFinalizePending");
     expect(ttsSource).toContain("client.models.generateContentStream");
     expect(ttsSource).toContain('responseModalities: ["AUDIO"]');
     expect(ttsSource).toContain("prebuiltVoiceConfig: { voiceName: body.voiceName }");

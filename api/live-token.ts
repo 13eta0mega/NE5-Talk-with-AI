@@ -102,18 +102,19 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     const expressionToolAvailable = !is25;
     const baseInstruction = buildSystemInstruction(body.characterId, memorySummary, expressionToolAvailable);
     const constrainedConfig: Record<string, unknown> = {
-      responseModalities: [externalTts ? "TEXT" : "AUDIO"],
+      // Gemini 3.1 Flash Live currently accepts AUDIO responses for Live sessions.
+      // In the hybrid mode its native PCM is discarded client-side while the
+      // output transcription becomes the script for the separate 3.1 Flash TTS.
+      responseModalities: ["AUDIO"],
+      speechConfig: speechConfig(modelId, body.voiceName),
       inputAudioTranscription: transcription,
+      outputAudioTranscription: transcription,
       realtimeInputConfig: REALTIME_INPUT_CONFIG,
       sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
       systemInstruction: {
         parts: [{ text: externalTts ? expressiveTtsSystemInstruction(baseInstruction) : baseInstruction }],
       },
     };
-    if (!externalTts) {
-      constrainedConfig.speechConfig = speechConfig(modelId, body.voiceName);
-      constrainedConfig.outputAudioTranscription = transcription;
-    }
     if (is25) {
       constrainedConfig.thinkingConfig = { thinkingBudget: 0 };
     } else {

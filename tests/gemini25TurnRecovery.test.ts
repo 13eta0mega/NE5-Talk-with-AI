@@ -15,9 +15,10 @@ describe("Gemini 2.5 turn recovery", () => {
     expect(looksLikePrematureCutoff("그렇게 하면 돼요")).toBe(false);
   });
 
-  it("uses a bounded repair and sub-second idle completion fallback", () => {
+  it("uses a bounded repair and a pause-tolerant 2.5 idle completion fallback", () => {
     expect(GEMINI25_MAX_COMPLETION_REPAIRS).toBe(1);
-    expect(GEMINI25_AUDIO_IDLE_COMMIT_MS).toBeLessThan(1000);
+    expect(GEMINI25_AUDIO_IDLE_COMMIT_MS).toBeGreaterThanOrEqual(2000);
+    expect(GEMINI25_AUDIO_IDLE_COMMIT_MS).toBeLessThanOrEqual(4000);
   });
 
   it("does not invalidate playback completion for every incoming audio chunk", async () => {

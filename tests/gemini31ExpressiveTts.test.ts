@@ -42,7 +42,14 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
           controller.close();
         },
       });
-      return new Response(body, { status: 200, headers: { "Content-Type": "audio/pcm;rate=24000" } });
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "Content-Type": "audio/pcm;rate=24000",
+          "X-TTS-Delivery": "interactions-stream",
+          "X-Audio-Sample-Rate": "24000",
+        },
+      });
     }) as typeof fetch;
     const adapter = new GeminiTtsAdapter(fetcher, () => "test-api-key-value-long-enough-123456");
     const samples: number[] = [];
@@ -130,11 +137,12 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(events.map((event) => event.type)).toContain("turn-complete");
   });
 
-  it("uses supported Live AUDIO plus output transcription and resilient TTS delivery", async () => {
+  it("uses current Interactions streaming TTS with bounded compatibility fallbacks", async () => {
     const liveModelsSource = await readFile(path.resolve("api/live-models.ts"), "utf8");
     const liveTokenSource = await readFile(path.resolve("api/live-token.ts"), "utf8");
     const ttsSource = await readFile(path.resolve("api/tts-stream.ts"), "utf8");
     const liveSource = await readFile(path.resolve("src/core/gemini/GeminiLiveAdapter.ts"), "utf8");
+    const ttsClientSource = await readFile(path.resolve("src/core/gemini/GeminiTtsAdapter.ts"), "utf8");
 
     expect(liveModelsSource).toContain("GEMINI_31_EXPRESSIVE_TTS_MODE");
     expect(liveModelsSource).toContain("애니메이션 성우");
@@ -149,11 +157,19 @@ describe("Gemini 3.1 Live + expressive TTS mode", () => {
     expect(liveSource).toContain("bufferExternalTtsFallbackAudio");
     expect(liveSource).toContain("emitExternalTtsFallbackAudio");
     expect(liveSource).toContain("externalTtsFinalizePending");
-    expect(ttsSource).toContain("client.models.generateContentStream");
+
+    expect(ttsSource).toContain("interactions?.create");
+    expect(ttsSource).toContain('response_format: { type: "audio" }');
+    expect(ttsSource).toContain('speech_config: [{ voice: body.voiceName, language: "ko-KR" }]');
+    expect(ttsSource).toContain("store: false");
+    expect(ttsSource).toContain("stream: true");
+    expect(ttsSource).toContain("interactions-stream");
+    expect(ttsSource).toContain("interactions-fallback");
     expect(ttsSource).toContain("client.models.generateContent({");
+    expect(ttsSource).not.toContain("client.models.generateContentStream");
     expect(ttsSource).toContain("generate-content-fallback");
-    expect(ttsSource).toContain('responseModalities: ["AUDIO"]');
-    expect(ttsSource).toContain("prebuiltVoiceConfig: { voiceName: body.voiceName }");
     expect(ttsSource).toContain('"audio/pcm;rate=24000"');
+    expect(ttsClientSource).toContain('response.headers.get("X-TTS-Delivery")');
+    expect(ttsClientSource).toContain('event: "audio-complete"');
   });
 });

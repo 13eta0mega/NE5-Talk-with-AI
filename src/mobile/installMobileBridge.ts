@@ -198,7 +198,9 @@ export function installMobileBridge(): void {
           speakerId: typeof patch.speakerId === "string" ? patch.speakerId : current.speakerId,
           transcriptEnabled: typeof patch.transcriptEnabled === "boolean" ? patch.transcriptEnabled : current.transcriptEnabled,
         };
+        const pitchChanged = next.selectedVoicePitch !== current.selectedVoicePitch;
         writeJson(SETTINGS_KEY, next);
+        if (pitchChanged) clearResumeState();
         return { ok: true };
       },
     },

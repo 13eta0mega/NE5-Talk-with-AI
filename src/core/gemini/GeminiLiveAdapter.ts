@@ -14,6 +14,7 @@ const GESTURES = new Set<GestureId>([
 const KOREAN_LANGUAGE_CODE = "ko-KR";
 const LIVE_CONNECT_TIMEOUT_MS = 12000;
 const RESUME_CONNECT_TIMEOUT_MS = 6000;
+const GO_AWAY_RECONNECT_LEAD_MS = 1200;
 const REALTIME_INPUT_CONFIG = {
   activityHandling: "NO_INTERRUPTION",
   automaticActivityDetection: {
@@ -75,6 +76,7 @@ export class GeminiLiveAdapter {
   private subscriber?: Subscriber;
   private connectionEpoch = 0;
   private ready = false;
+  private goAwayTimer?: number;
 
   get isReady(): boolean { return this.ready && Boolean(this.session); }
 
@@ -89,6 +91,11 @@ export class GeminiLiveAdapter {
     this.subscriber?.(event);
   }
 
+  private clearGoAwayTimer(): void {
+    if (this.goAwayTimer !== undefined) window.clearTimeout(this.goAwayTimer);
+    this.goAwayTimer = undefined;
+  }
+
   private emitInferredExpression(text: string): void {
     const inferred = inferEmotionFromText(text);
     if (!inferred) return;
@@ -97,6 +104,7 @@ export class GeminiLiveAdapter {
 
   async connect(characterId: string, voiceName: string, modelId: string): Promise<void> {
     if (!window.deskPet) throw new Error("Live 모드는 Electron 앱에서 실행해야 합니다.");
+    this.clearGoAwayTimer();
     this.ready = false;
     this.session = undefined;
     const firstEpoch = ++this.connectionEpoch;
@@ -175,6 +183,7 @@ export class GeminiLiveAdapter {
         },
         onclose: (event: { reason?: string; code?: number }) => {
           if (epoch !== this.connectionEpoch) return;
+          this.clearGoAwayTimer();
           this.ready = false;
           this.session = undefined;
           const message = closeMessage(event.code, event.reason);
@@ -229,6 +238,7 @@ export class GeminiLiveAdapter {
   }
 
   async close(): Promise<void> {
+    this.clearGoAwayTimer();
     this.connectionEpoch += 1;
     this.ready = false;
     this.session?.close();
@@ -286,8 +296,17 @@ export class GeminiLiveAdapter {
     }
     if (message.goAway) {
       const raw = message.goAway.timeLeft ?? message.goAway.timeLeftMs ?? 0;
-      const timeLeftMs = typeof raw === "string" ? Number.parseFloat(raw) * 1000 : Number(raw);
-      this.emit({ type: "go-away", timeLeftMs: Number.isFinite(timeLeftMs) ? timeLeftMs : 0 });
+      const parsedTimeLeftMs = typeof raw === "string" ? Number.parseFloat(raw) * 1000 : Number(raw);
+      const timeLeftMs = Number.isFinite(parsedTimeLeftMs) ? Math.max(0, parsedTimeLeftMs) : 0;
+      const delayMs = Math.max(0, timeLeftMs - GO_AWAY_RECONNECT_LEAD_MS);
+      this.clearGoAwayTimer();
+      const emitGoAway = () => {
+        this.goAwayTimer = undefined;
+        if (!this.isReady) return;
+        this.emit({ type: "go-away", timeLeftMs: Math.min(timeLeftMs, GO_AWAY_RECONNECT_LEAD_MS) });
+      };
+      if (delayMs === 0) emitGoAway();
+      else this.goAwayTimer = window.setTimeout(emitGoAway, delayMs);
     }
 
     const calls = message.toolCall?.functionCalls ?? [];

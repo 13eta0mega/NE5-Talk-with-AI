@@ -59,26 +59,34 @@ describe("Gemini Live microphone transport reliability", () => {
     expect(detector).toContain('never return "speech-end"');
     expect(coordinator).toContain("this.provider.endInputAudio()");
     expect(coordinator).toContain("private async enterPlaybackMode");
-    expect(coordinator).toContain("stale VAD/audio cache across turns");
+    const playback = coordinator.slice(
+      coordinator.indexOf("private async enterPlaybackMode"),
+      coordinator.indexOf("private async restoreListeningCapture"),
+    );
+    expect(playback).toContain("this.provider.endInputAudio()");
   });
 
-  it("tracks raw PCM heartbeat and can force-restart a live-looking but stalled capture", async () => {
+  it("tracks raw and forwarded PCM heartbeat and can force-restart a live-looking but stalled capture", async () => {
     const engine = await readFile(path.resolve("src/core/audio/AudioEngine.ts"), "utf8");
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     expect(engine).toContain("lastCapturePcmAt");
+    expect(engine).toContain("lastForwardedMicAt");
     expect(engine).toContain("captureHeartbeatFresh");
+    expect(engine).toContain("forwardedMicHeartbeatFresh");
     expect(engine).toContain("forceRestartCapture");
     expect(coordinator).toContain("MIC_HEALTH_CHECK_MS = 850");
-    expect(coordinator).toContain("this.audio.captureHeartbeatFresh");
+    expect(coordinator).toContain("this.audio.captureHeartbeatFresh && this.audio.forwardedMicHeartbeatFresh");
     expect(coordinator).toContain("this.audio.forceRestartCapture(this.microphoneDeviceId)");
   });
 
-  it("keeps the microphone stream alive during TTS and only gates outgoing PCM", async () => {
+  it("keeps the microphone stream alive during TTS and restores listening routing after playback", async () => {
     const engine = await readFile(path.resolve("src/core/audio/AudioEngine.ts"), "utf8");
     const start = engine.indexOf("async pauseCaptureForPlayback");
     const end = engine.indexOf("async preparePlayback", start);
     const pause = engine.slice(start, end);
     expect(pause).not.toContain("stopCapture");
     expect(pause).toContain('this.setAudioSessionType("playback")');
+    expect(engine).toContain("async resumeCaptureForListening");
+    expect(engine).toContain('this.audioSession.type = "play-and-record"');
   });
 });

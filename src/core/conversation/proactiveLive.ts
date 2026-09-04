@@ -14,7 +14,6 @@ const INTERNAL_IDLE_PROMPT = `${INTERNAL_IDLE_MARKER}
 - 1~2개의 짧고 자연스러운 문장으로 말하고, "30초", "유휴", "타이머", "시스템" 같은 내부 사정은 절대 말하지 않는다.`;
 
 type ProactiveState = {
-  userActivitySeen: boolean;
   nudgeCount: number;
   timer?: number;
   latest?: ConversationSnapshot;
@@ -35,7 +34,6 @@ function stateFor(instance: ConversationCoordinator): ProactiveState {
   let state = states.get(instance);
   if (!state) {
     state = {
-      userActivitySeen: false,
       nudgeCount: 0,
       lastObservedInputTranscript: "",
       lastPublicInputTranscript: "",
@@ -66,7 +64,6 @@ export function proactiveIdlePrompt(): string {
 function markRealUserActivity(instance: ConversationCoordinator): void {
   const state = stateFor(instance);
   clearTimer(state);
-  state.userActivitySeen = true;
   state.nudgeCount = 0;
 }
 
@@ -81,18 +78,18 @@ function scheduleIdleNudge(
 ): void {
   const state = stateFor(instance);
   clearTimer(state);
-  if (!state.userActivitySeen || state.latest?.phase !== "listening" || !instance.provider.isReady) return;
+  if (state.latest?.phase !== "listening" || !instance.provider.isReady) return;
   const delay = proactiveIdleDelayMs(state.nudgeCount);
   if (delay === undefined) return;
 
   state.timer = window.setTimeout(() => {
     state.timer = undefined;
-    if (!state.userActivitySeen || state.latest?.phase !== "listening" || !instance.provider.isReady) return;
+    if (state.latest?.phase !== "listening" || !instance.provider.isReady) return;
     state.nudgeCount += 1;
 
-    // Use the coordinator's original text-turn path instead of writing directly to
-    // the Gemini socket. This closes/gates the live microphone, updates phases,
-    // owns playback, and reopens capture exactly like an ordinary safe text turn.
+    // Use the coordinator's ordinary text-turn path so a proactive turn owns the
+    // microphone gate, phase changes, playback and listening restoration exactly
+    // like a user-initiated text turn. Never write directly to the Live socket.
     void originalSendText.call(instance, INTERNAL_IDLE_PROMPT).catch(() => {
       // Proactive speech is optional. Normal coordinator recovery owns connection
       // errors, and a failed nudge must never add a second competing recovery path.
@@ -130,7 +127,6 @@ export function installProactiveLiveConversation(): void {
 
       if (snapshot.phase === "disconnected") {
         clearTimer(state);
-        state.userActivitySeen = false;
         state.nudgeCount = 0;
         state.lastObservedInputTranscript = "";
         state.lastPublicInputTranscript = "";
@@ -142,9 +138,9 @@ export function installProactiveLiveConversation(): void {
         return;
       }
 
-      // Voice transcription can arrive while the UI is already listening. Restart
-      // the inactivity clock from the latest real transcript. After a model turn,
-      // the speaking/thinking -> listening transition arms the clock again.
+      // Entering listening arms the companion even before the first user utterance.
+      // Streaming user transcription restarts the same inactivity clock, and after a
+      // model turn the speaking/thinking -> listening transition arms the next nudge.
       if (newRealInput || previousPhase !== "listening") {
         scheduleIdleNudge(this, originalSendText);
       }

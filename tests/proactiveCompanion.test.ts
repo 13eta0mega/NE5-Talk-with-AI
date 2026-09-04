@@ -35,6 +35,13 @@ describe("proactive DeskPet companion", () => {
     expect(source).not.toContain("GeminiLiveAdapter.prototype");
   });
 
+  it("arms proactive speech as soon as Live enters listening without requiring a prior user utterance", async () => {
+    const source = await readFile(path.resolve("src/core/conversation/proactiveLive.ts"), "utf8");
+    expect(source).toContain('state.latest?.phase !== "listening"');
+    expect(source).toContain('previousPhase !== "listening"');
+    expect(source).not.toContain("userActivitySeen");
+  });
+
   it("normalizes and bounds persisted user names", () => {
     expect(normalizeUserName("  주안\n 님  ")).toBe("주안 님");
     expect(normalizeUserName("가".repeat(100))).toHaveLength(40);

@@ -17,7 +17,8 @@ const THINKING_RESPONSE_TIMEOUT_MS = 10000;
 const TURN_COMPLETE_GRACE_MS = 240;
 const PLAYBACK_TAIL_GUARD_MS = 40;
 const MIC_HEALTH_CHECK_MS = 850;
-const MAX_MIC_PIPELINE_RECOVERIES = 2;
+const MAX_MIC_PIPELINE_RECOVERIES = 3;
+const MIC_RECOVERY_COOLDOWN_MS = 2500;
 const RECONNECT_BACKOFF_MS = [350, 900, 1800] as const;
 
 export interface ConversationSnapshot {
@@ -90,15 +91,6 @@ export class ConversationCoordinator {
       if (signal === "speech-start") {
         this.clearThinkingResponseTimer();
         return;
-      }
-      if (signal === "speech-end" && this.snapshot.phase === "listening" && this.desiredListening) {
-        // Flush Gemini's server-side VAD/audio cache and stop forwarding the following
-        // silence. The next listening phase reopens the gate and the next PCM packet
-        // automatically reopens the realtime audio stream.
-        this.audio.gate.close();
-        this.provider.endInputAudio();
-        this.transition("USER_SPEECH_END");
-        this.armThinkingResponseTimer();
       }
     };
     this.audio.onPlaybackStart = () => {
@@ -177,22 +169,31 @@ export class ConversationCoordinator {
     }
   }
 
-  private armMicHealthCheck(): void {
+  private armMicHealthCheck(delayMs = MIC_HEALTH_CHECK_MS): void {
     this.clearMicHealthTimer();
     if (!this.desiredListening || this.snapshot.phase !== "listening") return;
     this.micHealthTimer = window.setTimeout(() => {
       this.micHealthTimer = undefined;
       if (this.disposed || !this.desiredListening || this.snapshot.phase !== "listening") return;
-      if (this.audio.captureHeartbeatFresh) {
+      if (this.audio.captureHeartbeatFresh && this.audio.forwardedMicHeartbeatFresh) {
         this.micPipelineRecoveries = 0;
         this.armMicHealthCheck();
         return;
       }
+
       if (this.micPipelineRecoveries >= MAX_MIC_PIPELINE_RECOVERIES) {
-        this.update({ error: "마이크 입력 스트림이 멈췄습니다. 마이크 버튼을 다시 눌러 복구해 주세요." });
+        this.logTransport("microphone-recovery-cooldown", this.audio.captureDiagnostics());
+        this.micPipelineRecoveries = 0;
+        this.update({ error: "마이크 입력이 잠시 멈춰 자동 복구를 계속 시도하고 있습니다." });
+        this.armMicHealthCheck(MIC_RECOVERY_COOLDOWN_MS);
         return;
       }
+
       this.micPipelineRecoveries += 1;
+      this.logTransport("microphone-pipeline-restart", {
+        attempt: this.micPipelineRecoveries,
+        ...this.audio.captureDiagnostics(),
+      });
       this.audio.gate.close();
       this.provider.endInputAudio();
       void this.audio.forceRestartCapture(this.microphoneDeviceId).then(() => {
@@ -200,12 +201,13 @@ export class ConversationCoordinator {
         this.micTurnDetector.reset();
         this.audio.gate.setSpeaking(false);
         this.audio.gate.open();
+        this.update({ error: undefined });
         this.armMicHealthCheck();
       }).catch((error) => {
         this.update({ error: error instanceof Error ? `마이크 자동 복구 실패: ${error.message}` : "마이크 자동 복구에 실패했습니다." });
         this.armMicHealthCheck();
       });
-    }, MIC_HEALTH_CHECK_MS);
+    }, delayMs);
   }
 
   private armAudioIdleCommitTimer(epoch: number): void {
@@ -268,9 +270,6 @@ export class ConversationCoordinator {
   private async enterPlaybackMode(): Promise<void> {
     if (!this.capturePauseForPlayback) {
       this.clearMicHealthTimer();
-      // Playback pauses the outgoing microphone stream for well over one second on
-      // normal replies. Explicitly end that realtime stream so Gemini does not retain
-      // stale VAD/audio cache across turns.
       this.audio.gate.close();
       this.provider.endInputAudio();
       const pause = this.audio.pauseCaptureForPlayback();
@@ -289,7 +288,7 @@ export class ConversationCoordinator {
   private async restoreListeningCapture(): Promise<void> {
     try {
       if (this.capturePauseForPlayback) await this.capturePauseForPlayback;
-      if (this.desiredListening && !this.audio.captureActive) await this.audio.startCapture(this.microphoneDeviceId);
+      if (this.desiredListening) await this.audio.resumeCaptureForListening(this.microphoneDeviceId);
     } finally {
       this.capturePauseForPlayback = undefined;
     }

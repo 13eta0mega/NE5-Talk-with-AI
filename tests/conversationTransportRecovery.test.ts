@@ -36,11 +36,13 @@ function createTransportHarness() {
     onCapturePcm: undefined,
     onPlaybackStart: undefined,
     get captureHeartbeatFresh() { return true; },
+    get forwardedMicHeartbeatFresh() { return true; },
     get captureActive() { return true; },
     get queueEmpty() { return true; },
     preparePlayback: async () => undefined,
     unlockPlayback: async () => undefined,
     startCapture: async () => undefined,
+    resumeCaptureForListening: async () => undefined,
     stopCapture: async () => undefined,
     forceRestartCapture: async () => undefined,
     pauseCaptureForPlayback: async () => undefined,
@@ -146,5 +148,24 @@ describe("continuous Gemini transport recovery", () => {
     expect(harness.sendPcm16).not.toHaveBeenCalled();
     expect(harness.internals.snapshot.phase).toBe("reconnecting");
     expect(harness.internals.snapshot.error).toContain("자동 재연결");
+  });
+
+  it("does not reconnect immediately on GoAway while current speech still has time to drain", async () => {
+    const harness = createTransportHarness();
+    harness.internals.snapshot = { ...harness.internals.snapshot, phase: "speaking" };
+
+    harness.emit({ type: "go-away", timeLeftMs: 10_000 });
+    await flushMicrotasks();
+    expect(harness.internals.snapshot.phase).toBe("reconnecting");
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(harness.close).not.toHaveBeenCalled();
+    expect(harness.connect).not.toHaveBeenCalled();
+    expect(harness.audio.flushPlayback).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(8_300);
+    await flushMicrotasks();
+    expect(harness.close).toHaveBeenCalledTimes(1);
+    expect(harness.connect).toHaveBeenCalledTimes(1);
   });
 });

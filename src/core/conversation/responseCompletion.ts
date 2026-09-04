@@ -9,11 +9,17 @@ export const GEMINI25_INLINE_COMPLETION_REPAIRS = LIVE_INLINE_COMPLETION_REPAIRS
 
 const INCOMPLETE_CONNECTIVE = /(?:고|서|는데|지만|니까|면|면서|다가|거나|든지|때문에|그리고|그래서|하지만|또는|하는|되는|있는|없는|같은|위한|위해|중요한|필요한|좋은|많은|작은|큰|할|될|인|라는|라고|하며|해서|하도록|려고)$/;
 const DANGLING_PARTICLE = /(?:은|는|이|가|을|를|에|의|와|과|도|만|부터|까지|로|으로)$/;
+const TRAILING_HESITATION = /(?:뭐가|뭔가|그게|그러니까|잠깐|음+|흠+|어+|으음+|아니\s*그)[\s.…!?！？~]*$/;
 const COMPLETE_ENDING = /(?:[.!?…。！？~]|야|이야|예요|이에요|해|해요|했어|했어요|돼|돼요|거야|거예요|지|죠|네|군|구나|다|요|까|니|냐|래|어|아|자|겠습니다|입니다|한다|된다)$/;
 
 export function looksLikePrematureCutoff(value: string): boolean {
   const text = value.trim();
   if (text.length < 4) return false;
+
+  // Native Audio sometimes closes a turn immediately after a filler or unfinished
+  // restart such as "뭐가... 음...". Punctuation alone must not classify that as a
+  // complete sentence, otherwise the inline continuation guard never gets a chance.
+  if (TRAILING_HESITATION.test(text)) return true;
   if (COMPLETE_ENDING.test(text)) return false;
   if (/[,;:·…(\[{'\"]$/.test(text)) return true;
   if (INCOMPLETE_CONNECTIVE.test(text)) return true;

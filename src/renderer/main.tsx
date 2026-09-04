@@ -2,12 +2,15 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { installMobileBridge } from "../mobile/installMobileBridge";
+import { installProactiveLiveConversation } from "../core/conversation/proactiveLive";
+import { UserNameSetting } from "./components/UserNameSetting";
 import "./styles.css";
 import "./chat.css";
 import "./lipsync.css";
 
 const nativeDesktopBridge = Boolean(window.deskPet);
 installMobileBridge();
+installProactiveLiveConversation();
 
 if ("serviceWorker" in navigator && !nativeDesktopBridge) {
   let refreshingForServiceWorker = false;
@@ -22,5 +25,5 @@ if ("serviceWorker" in navigator && !nativeDesktopBridge) {
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode><App /></React.StrictMode>,
+  <React.StrictMode><><App /><UserNameSetting /></></React.StrictMode>,
 );

@@ -521,7 +521,7 @@ export class ConversationCoordinator {
         this.logTransport("provider-go-away", { timeLeftMs: event.timeLeftMs });
         this.clearThinkingResponseTimer(); this.clearAudioIdleCommitTimer(); this.clearTurnFinalizeTimer(); this.clearMicHealthTimer(); this.clearReconnectStabilityTimer();
         if (!this.reconnecting && this.snapshot.phase !== "disconnected" && this.snapshot.phase !== "error") this.transition("RECONNECT");
-        this.scheduleReconnect("go-away", Math.min(250, Math.max(20, event.timeLeftMs - 500))); break;
+        this.scheduleReconnect("go-away", Math.max(20, event.timeLeftMs - 1200)); break;
       case "closed":
         this.logTransport("provider-closed", { code: event.code, reason: event.reason });
         this.clearThinkingResponseTimer(); this.clearAudioIdleCommitTimer(); this.clearTurnFinalizeTimer(); this.clearMicHealthTimer(); this.clearReconnectStabilityTimer();

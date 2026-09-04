@@ -1,11 +1,11 @@
-import { GeminiLiveAdapter } from "../gemini/GeminiLiveAdapter";
+import { ConversationCoordinator, type ConversationSnapshot } from "./ConversationCoordinator";
 
 export const FIRST_PROACTIVE_IDLE_MS = 30_000;
 export const FOLLOWUP_PROACTIVE_IDLE_MS = 90_000;
 export const MAX_PROACTIVE_IDLE_NUDGES = 3;
-export const PROACTIVE_MIC_RMS_THRESHOLD = 0.018;
 
-const INTERNAL_IDLE_PROMPT = `[DESKPET_INTERNAL_IDLE_NUDGE]
+const INTERNAL_IDLE_MARKER = "[DESKPET_INTERNAL_IDLE_NUDGE]";
+const INTERNAL_IDLE_PROMPT = `${INTERNAL_IDLE_MARKER}
 이 메시지는 사용자가 말한 내용이 아니라 DeskPet의 내부 유휴 트리거다. 사용자 입력처럼 인용하거나 언급하지 않는다.
 최근 대화 맥락을 먼저 떠올리고, 사용자가 잠시 조용한 상태이므로 캐릭터가 자연스럽게 먼저 말을 건다.
 - 최근 주제가 분명하면 그 주제와 직접 이어지는 호기심이나 후속 질문을 1개 던진다.
@@ -14,26 +14,30 @@ const INTERNAL_IDLE_PROMPT = `[DESKPET_INTERNAL_IDLE_NUDGE]
 - 1~2개의 짧고 자연스러운 문장으로 말하고, "30초", "유휴", "타이머", "시스템" 같은 내부 사정은 절대 말하지 않는다.`;
 
 type ProactiveState = {
-  ready: boolean;
-  userActivitySeen: boolean;
   nudgeCount: number;
   timer?: number;
+  latest?: ConversationSnapshot;
+  lastObservedInputTranscript: string;
+  lastPublicInputTranscript: string;
 };
 
-type PatchedPrototype = GeminiLiveAdapter & {
-  onEvent(callback: (event: any) => void): () => void;
-  sendText(text: string): void;
-  sendPcm16(chunk: Int16Array): void;
-  close(): Promise<void>;
+type PatchedPrototype = ConversationCoordinator & {
+  subscribe(listener: (value: ConversationSnapshot) => void): () => void;
+  sendText(text: string): Promise<void>;
 };
 
-const states = new WeakMap<GeminiLiveAdapter, ProactiveState>();
+let states = new WeakMap<ConversationCoordinator, ProactiveState>();
 let installed = false;
+let restorePrototype: (() => void) | undefined;
 
-function stateFor(instance: GeminiLiveAdapter): ProactiveState {
+function stateFor(instance: ConversationCoordinator): ProactiveState {
   let state = states.get(instance);
   if (!state) {
-    state = { ready: false, userActivitySeen: false, nudgeCount: 0 };
+    state = {
+      nudgeCount: 0,
+      lastObservedInputTranscript: "",
+      lastPublicInputTranscript: "",
+    };
     states.set(instance, state);
   }
   return state;
@@ -42,6 +46,10 @@ function stateFor(instance: GeminiLiveAdapter): ProactiveState {
 function clearTimer(state: ProactiveState): void {
   if (state.timer !== undefined) window.clearTimeout(state.timer);
   state.timer = undefined;
+}
+
+function isInternalIdleInput(value: string): boolean {
+  return value.includes(INTERNAL_IDLE_MARKER);
 }
 
 export function proactiveIdleDelayMs(nudgeCount: number): number | undefined {
@@ -53,42 +61,39 @@ export function proactiveIdlePrompt(): string {
   return INTERNAL_IDLE_PROMPT;
 }
 
-export function pcmLooksLikeUserSpeech(chunk: Int16Array): boolean {
-  if (!chunk.length) return false;
-  let energy = 0;
-  const stride = Math.max(1, Math.floor(chunk.length / 320));
-  let samples = 0;
-  for (let index = 0; index < chunk.length; index += stride) {
-    const normalized = chunk[index] / 32768;
-    energy += normalized * normalized;
-    samples += 1;
-  }
-  return Math.sqrt(energy / Math.max(1, samples)) >= PROACTIVE_MIC_RMS_THRESHOLD;
-}
-
-function markRealUserActivity(instance: GeminiLiveAdapter): void {
+function markRealUserActivity(instance: ConversationCoordinator): void {
   const state = stateFor(instance);
   clearTimer(state);
-  state.userActivitySeen = true;
   state.nudgeCount = 0;
 }
 
-function scheduleIdleNudge(instance: GeminiLiveAdapter, originalSendText: (this: GeminiLiveAdapter, text: string) => void): void {
+function publicSnapshot(state: ProactiveState, snapshot: ConversationSnapshot): ConversationSnapshot {
+  if (!isInternalIdleInput(snapshot.inputTranscript)) return snapshot;
+  return { ...snapshot, inputTranscript: state.lastPublicInputTranscript };
+}
+
+function scheduleIdleNudge(
+  instance: ConversationCoordinator,
+  originalSendText: (this: ConversationCoordinator, text: string) => Promise<void>,
+): void {
   const state = stateFor(instance);
   clearTimer(state);
-  if (!state.ready || !state.userActivitySeen || !instance.isReady) return;
+  if (state.latest?.phase !== "listening" || !instance.provider.isReady) return;
   const delay = proactiveIdleDelayMs(state.nudgeCount);
   if (delay === undefined) return;
+
   state.timer = window.setTimeout(() => {
     state.timer = undefined;
-    if (!state.ready || !state.userActivitySeen || !instance.isReady) return;
+    if (state.latest?.phase !== "listening" || !instance.provider.isReady) return;
     state.nudgeCount += 1;
-    try {
-      originalSendText.call(instance, INTERNAL_IDLE_PROMPT);
-    } catch {
-      // Connection recovery remains the coordinator's responsibility. A proactive
-      // nudge must never turn an otherwise healthy conversation into an error state.
-    }
+
+    // Use the coordinator's ordinary text-turn path so a proactive turn owns the
+    // microphone gate, phase changes, playback and listening restoration exactly
+    // like a user-initiated text turn. Never write directly to the Live socket.
+    void originalSendText.call(instance, INTERNAL_IDLE_PROMPT).catch(() => {
+      // Proactive speech is optional. Normal coordinator recovery owns connection
+      // errors, and a failed nudge must never add a second competing recovery path.
+    });
   }, delay);
 }
 
@@ -96,52 +101,67 @@ export function installProactiveLiveConversation(): void {
   if (installed) return;
   installed = true;
 
-  const prototype = GeminiLiveAdapter.prototype as PatchedPrototype;
-  const originalOnEvent = prototype.onEvent;
+  const prototype = ConversationCoordinator.prototype as PatchedPrototype;
+  const originalSubscribe = prototype.subscribe;
   const originalSendText = prototype.sendText;
-  const originalSendPcm16 = prototype.sendPcm16;
-  const originalClose = prototype.close;
 
-  prototype.onEvent = function onEvent(callback) {
-    return originalOnEvent.call(this, (event) => {
+  prototype.subscribe = function subscribe(listener) {
+    return originalSubscribe.call(this, (snapshot) => {
       const state = stateFor(this);
-      switch (event.type) {
-        case "connected":
-          state.ready = true;
-          break;
-        case "input-transcript":
-          markRealUserActivity(this);
-          break;
-        case "turn-complete":
-        case "waiting-for-input":
-          scheduleIdleNudge(this, originalSendText);
-          break;
-        case "closed":
-        case "error":
-          state.ready = false;
-          clearTimer(state);
-          break;
-        default:
-          break;
+      const previousPhase = state.latest?.phase;
+      state.latest = snapshot;
+
+      const input = snapshot.inputTranscript.trim();
+      const internalInput = isInternalIdleInput(input);
+      const newRealInput = Boolean(input)
+        && !internalInput
+        && input !== state.lastObservedInputTranscript;
+
+      if (newRealInput) {
+        state.lastObservedInputTranscript = input;
+        state.lastPublicInputTranscript = snapshot.inputTranscript;
+        markRealUserActivity(this);
       }
-      callback(event);
+
+      listener(publicSnapshot(state, snapshot));
+
+      if (snapshot.phase === "disconnected") {
+        clearTimer(state);
+        state.nudgeCount = 0;
+        state.lastObservedInputTranscript = "";
+        state.lastPublicInputTranscript = "";
+        return;
+      }
+
+      if (snapshot.phase !== "listening") {
+        clearTimer(state);
+        return;
+      }
+
+      // Entering listening arms the companion even before the first user utterance.
+      // Streaming user transcription restarts the same inactivity clock, and after a
+      // model turn the speaking/thinking -> listening transition arms the next nudge.
+      if (newRealInput || previousPhase !== "listening") {
+        scheduleIdleNudge(this, originalSendText);
+      }
     });
   };
 
-  prototype.sendText = function sendText(text) {
-    if (text.trim()) markRealUserActivity(this);
+  prototype.sendText = async function sendText(text) {
+    const value = text.trim();
+    if (value && !isInternalIdleInput(value)) markRealUserActivity(this);
     return originalSendText.call(this, text);
   };
 
-  prototype.sendPcm16 = function sendPcm16(chunk) {
-    if (pcmLooksLikeUserSpeech(chunk)) markRealUserActivity(this);
-    return originalSendPcm16.call(this, chunk);
+  restorePrototype = () => {
+    prototype.subscribe = originalSubscribe;
+    prototype.sendText = originalSendText;
   };
+}
 
-  prototype.close = async function close() {
-    const state = stateFor(this);
-    state.ready = false;
-    clearTimer(state);
-    return originalClose.call(this);
-  };
+export function uninstallProactiveLiveConversationForTests(): void {
+  restorePrototype?.();
+  restorePrototype = undefined;
+  installed = false;
+  states = new WeakMap<ConversationCoordinator, ProactiveState>();
 }

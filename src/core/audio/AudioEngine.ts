@@ -8,7 +8,7 @@ export type AudioDeviceCapabilities = {
   audioSession: boolean;
 };
 
-type AudioSessionType = "auto" | "playback";
+type AudioSessionType = "auto" | "playback" | "play-and-record";
 type AudioSessionController = { type: AudioSessionType };
 type OutputMediaDevices = MediaDevices & {
   selectAudioOutput?: (options?: { deviceId?: string }) => Promise<MediaDeviceInfo>;
@@ -23,6 +23,7 @@ export const ANDROID_AUDIO_MODE_SETTLE_MS = 260;
 export const PLAYBACK_SAMPLE_RATE = 24000;
 export const AUDIO_WORKLET_VERSION = "20260904-jitter-1";
 export const CAPTURE_HEARTBEAT_FRESH_MS = 700;
+export const FORWARDED_MIC_FRESH_MS = 900;
 export const PLAYBACK_DRAIN_TIMEOUT_MS = 30000;
 export const ANDROID_PLAYBACK_INITIAL_BUFFER_MS = 220;
 export const ANDROID_PLAYBACK_REBUFFER_MS = 140;
@@ -52,6 +53,7 @@ export class AudioEngine {
   private lastCapturePcmAt = 0;
   private lastForwardedMicAt = 0;
   private captureStartedAt = 0;
+  private listeningResumedAt = 0;
 
   onInputLevel?: (level: number) => void;
   onOutputLevel?: (level: number) => void;
@@ -82,7 +84,21 @@ export class AudioEngine {
     try {
       if (this.audioSession) this.audioSession.type = type;
     } catch {
-      // Audio Session is experimental. The playback AudioContext remains the fallback signal.
+      // Audio Session is experimental. The AudioContext/getUserMedia pair remains
+      // authoritative when a browser rejects an unsupported session type.
+    }
+  }
+
+  private setListeningAudioSessionType(): void {
+    if (!this.audioSession) return;
+    if (!this.needsAndroidAudioModeReset) {
+      this.setAudioSessionType("auto");
+      return;
+    }
+    try {
+      this.audioSession.type = "play-and-record";
+    } catch {
+      this.setAudioSessionType("auto");
     }
   }
 
@@ -177,11 +193,11 @@ export class AudioEngine {
 
   async startCapture(deviceId = "default"): Promise<void> {
     if (this.captureContext && this.captureDeviceId === deviceId && this.captureActive) {
-      this.setAudioSessionType(this.needsAndroidAudioModeReset ? "playback" : "auto");
-      if (this.captureContext.state === "suspended") await this.captureContext.resume();
+      await this.resumeCaptureForListening(deviceId);
       return;
     }
     await this.createCapture(deviceId);
+    await this.resumeCaptureForListening(deviceId);
   }
 
   private async createCapture(deviceId: string): Promise<void> {
@@ -189,6 +205,9 @@ export class AudioEngine {
     this.flushPlayback(false);
 
     const android = this.needsAndroidAudioModeReset;
+    // Android is switched to playback only while acquiring the stream so the
+    // output route remains stable. Once capture is live, resumeCaptureForListening
+    // moves the OS session back to a duplex/listening mode.
     this.setAudioSessionType(android ? "playback" : "auto");
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -224,12 +243,23 @@ export class AudioEngine {
     this.captureNode = node;
     this.captureDeviceId = deviceId;
     this.captureStartedAt = Date.now();
+    this.listeningResumedAt = this.captureStartedAt;
     this.lastCapturePcmAt = 0;
     this.lastForwardedMicAt = 0;
   }
 
+  async resumeCaptureForListening(deviceId = this.captureDeviceId ?? "default"): Promise<void> {
+    if (!this.captureActive || this.captureDeviceId !== deviceId) {
+      await this.createCapture(deviceId);
+    }
+    this.setListeningAudioSessionType();
+    if (this.captureContext?.state === "suspended") await this.captureContext.resume();
+    this.listeningResumedAt = Date.now();
+  }
+
   async forceRestartCapture(deviceId = this.captureDeviceId ?? "default"): Promise<void> {
     await this.createCapture(deviceId);
+    await this.resumeCaptureForListening(deviceId);
   }
 
   async stopCapture(): Promise<void> {
@@ -241,6 +271,7 @@ export class AudioEngine {
     this.captureContext = undefined;
     this.captureDeviceId = undefined;
     this.captureStartedAt = 0;
+    this.listeningResumedAt = 0;
     this.lastCapturePcmAt = 0;
     this.lastForwardedMicAt = 0;
     this.onInputLevel?.(0);
@@ -369,15 +400,29 @@ export class AudioEngine {
     return reference > 0 && now - reference <= CAPTURE_HEARTBEAT_FRESH_MS;
   }
 
+  get forwardedMicHeartbeatFresh(): boolean {
+    if (!this.captureActive || !this.gate.diagnostics().open) return false;
+    const now = Date.now();
+    const reference = this.lastForwardedMicAt || this.listeningResumedAt || this.captureStartedAt;
+    return reference > 0 && now - reference <= FORWARDED_MIC_FRESH_MS;
+  }
+
   captureDiagnostics() {
     return {
       active: this.captureActive,
       heartbeatFresh: this.captureHeartbeatFresh,
+      forwardedHeartbeatFresh: this.forwardedMicHeartbeatFresh,
       lastCapturePcmAt: this.lastCapturePcmAt,
       lastForwardedMicAt: this.lastForwardedMicAt,
       captureStartedAt: this.captureStartedAt,
+      listeningResumedAt: this.listeningResumedAt,
       contextState: this.captureContext?.state ?? "none",
-      trackStates: (this.captureStream?.getAudioTracks() ?? []).map((track) => track.readyState),
+      trackStates: (this.captureStream?.getAudioTracks() ?? []).map((track) => ({
+        readyState: track.readyState,
+        enabled: track.enabled,
+        muted: track.muted,
+      })),
+      audioSessionType: this.audioSession?.type ?? "unavailable",
     };
   }
 

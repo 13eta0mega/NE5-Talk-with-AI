@@ -1,10 +1,11 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSystemInstruction } from "../electron/personaVault";
 import {
   FIRST_PROACTIVE_IDLE_MS,
   FOLLOWUP_PROACTIVE_IDLE_MS,
   MAX_PROACTIVE_IDLE_NUDGES,
-  pcmLooksLikeUserSpeech,
   proactiveIdleDelayMs,
   proactiveIdlePrompt,
 } from "../src/core/conversation/proactiveLive";
@@ -27,11 +28,18 @@ describe("proactive DeskPet companion", () => {
     expect(prompt).toContain("내부 사정은 절대 말하지 않는다");
   });
 
-  it("does not count digital silence as real user activity", () => {
-    expect(pcmLooksLikeUserSpeech(new Int16Array(1600))).toBe(false);
-    const speech = new Int16Array(1600);
-    for (let index = 0; index < speech.length; index += 1) speech[index] = index % 2 ? 2500 : -2500;
-    expect(pcmLooksLikeUserSpeech(speech)).toBe(true);
+  it("routes idle nudges through the coordinator rather than writing directly to the provider", async () => {
+    const source = await readFile(path.resolve("src/core/conversation/proactiveLive.ts"), "utf8");
+    expect(source).toContain("ConversationCoordinator.prototype");
+    expect(source).toContain("originalSendText.call(instance, INTERNAL_IDLE_PROMPT)");
+    expect(source).not.toContain("GeminiLiveAdapter.prototype");
+  });
+
+  it("arms proactive speech as soon as Live enters listening without requiring a prior user utterance", async () => {
+    const source = await readFile(path.resolve("src/core/conversation/proactiveLive.ts"), "utf8");
+    expect(source).toContain('state.latest?.phase !== "listening"');
+    expect(source).toContain('previousPhase !== "listening"');
+    expect(source).not.toContain("userActivitySeen");
   });
 
   it("normalizes and bounds persisted user names", () => {

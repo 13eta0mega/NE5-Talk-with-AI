@@ -74,13 +74,16 @@ describe("microphone transport recovery", () => {
     expect(app).toContain("coordinator.audio.captureHeartbeatFresh");
   });
 
-  it("rebuilds a stalled Android capture pipeline instead of silently staying ready", async () => {
+  it("rebuilds stalled raw or forwarded Android microphone pipelines instead of silently staying ready", async () => {
     const coordinator = await readFile(path.resolve("src/core/conversation/ConversationCoordinator.ts"), "utf8");
     const engine = await readFile(path.resolve("src/core/audio/AudioEngine.ts"), "utf8");
     expect(coordinator).toContain("MIC_HEALTH_CHECK_MS = 850");
-    expect(coordinator).toContain("MAX_MIC_PIPELINE_RECOVERIES = 2");
-    expect(coordinator).toContain("if (this.audio.captureHeartbeatFresh)");
+    expect(coordinator).toContain("MAX_MIC_PIPELINE_RECOVERIES = 3");
+    expect(coordinator).toContain("MIC_RECOVERY_COOLDOWN_MS = 2500");
+    expect(coordinator).toContain("this.audio.captureHeartbeatFresh && this.audio.forwardedMicHeartbeatFresh");
     expect(coordinator).toContain("this.audio.forceRestartCapture(this.microphoneDeviceId)");
+    expect(engine).toContain("get forwardedMicHeartbeatFresh(): boolean");
+    expect(engine).toContain("async resumeCaptureForListening");
     expect(engine).toContain("async forceRestartCapture");
   });
 });

@@ -13,16 +13,18 @@ type CoordinatorInternals = {
 
 function createHarness(options: { pause?: () => Promise<void> } = {}) {
   const log: string[] = [];
-  const capture = { heartbeatFresh: true };
+  const capture = { heartbeatFresh: true, forwardedHeartbeatFresh: true };
   const forceRestartCapture = vi.fn(async () => { log.push("capture:restart"); });
   const audio = {
     gate: new AudioGate(),
     onCapturePcm: undefined,
     onPlaybackStart: undefined,
     get captureHeartbeatFresh() { return capture.heartbeatFresh; },
+    get forwardedMicHeartbeatFresh() { return capture.forwardedHeartbeatFresh; },
     get captureActive() { return true; },
     get queueEmpty() { return false; },
     pauseCaptureForPlayback: options.pause ?? (async () => { log.push("capture:pause"); }),
+    resumeCaptureForListening: async () => { log.push("capture:resume"); },
     enqueuePcm24k: async () => { log.push("playback:enqueue"); },
     commitBufferedPlayback: async () => { log.push("playback:commit"); },
     waitForDrain: async () => undefined,
@@ -100,17 +102,20 @@ describe("conversation runtime reliability", () => {
     expect(harness.log.indexOf("playback:enqueue")).toBeLessThan(harness.log.indexOf("playback:commit"));
   });
 
-  it("keeps checking a healthy microphone and recovers a later stall", async () => {
+  it("keeps checking a healthy microphone and recovers when PCM stops reaching Gemini", async () => {
     const harness = createHarness();
     const internals = harness.coordinator as unknown as CoordinatorInternals;
     internals.desiredListening = true;
     internals.snapshot = { ...internals.snapshot, phase: "listening" };
+    harness.coordinator.audio.gate.open();
     internals.armMicHealthCheck();
 
     await vi.advanceTimersByTimeAsync(850);
     expect(harness.forceRestartCapture).not.toHaveBeenCalled();
 
-    harness.capture.heartbeatFresh = false;
+    // Raw capture can still look alive while the gate/forwarding path has stalled.
+    // The forwarded heartbeat must independently trigger a pipeline rebuild.
+    harness.capture.forwardedHeartbeatFresh = false;
     await vi.advanceTimersByTimeAsync(850);
     expect(harness.forceRestartCapture).toHaveBeenCalledTimes(1);
   });

@@ -16,8 +16,6 @@ const REALTIME_INPUT_CONFIG = {
     startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
     endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
     prefixPaddingMs: 120,
-    // Give natural Korean clause pauses enough room. Continuous microphone turns
-    // are finalized by Gemini server VAD instead of the old 420ms local cutoff.
     silenceDurationMs: 900,
   },
 };
@@ -64,6 +62,12 @@ function youthfulNativeSystemInstruction(base: string): string {
   return `${base}\n\n# Native Animation Performance Guard\n이 모드는 별도 TTS 없이 Gemini 3.1 Live Native Audio 자체가 최종 캐릭터 목소리다. 이미 제공된 Animated Mascot 음성 프로필을 실제 발성에 우선 적용한다.\n- 대사 내용만 캐릭터처럼 쓰고 목소리는 평범한 성인 톤으로 읽는 행동을 피한다.\n- 매 턴 첫 구절부터 밝은 공명, 가벼운 질감, 살아 있는 pitch contour가 들려야 한다.\n- 무표정한 낭독, 낮고 안정적인 설명체, 성숙한 여성 내레이션으로 회귀하지 않는다.\n- 감정이 바뀌면 같은 음색 안에서 속도, pitch movement, 강세, 미소의 정도를 즉시 바꾼다.\n- 선택된 preset voice를 기반으로 하되 캐릭터 연기 지시를 최대한 살린다.`;
 }
 
+function normalizeUserName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+  return normalized || undefined;
+}
+
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   noStore(response);
   if (request.method !== "POST") {
@@ -105,6 +109,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       ? body.resumeHandle
       : undefined;
     const memorySummary = typeof body.memorySummary === "string" ? body.memorySummary.slice(0, 1600) : undefined;
+    const userName = normalizeUserName(body.userName);
     const now = Date.now();
     const transcription = transcriptionConfig(modelId);
     const is25 = isGemini25LiveModel(modelId);
@@ -114,6 +119,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       memorySummary,
       expressionToolAvailable,
       youthfulNative ? "animated-mascot" : "default",
+      userName,
     );
     const modeInstruction = externalTts
       ? expressiveTtsSystemInstruction(baseInstruction)

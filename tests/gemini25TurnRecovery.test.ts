@@ -11,8 +11,11 @@ describe("Gemini 2.5 turn recovery", () => {
   it("detects strong signs of a response cut off mid-sentence", () => {
     expect(looksLikePrematureCutoff("무슨 흥미로운 얘기가")).toBe(true);
     expect(looksLikePrematureCutoff("그 이유는 여러 가지가 있는데")).toBe(true);
+    expect(looksLikePrematureCutoff("아, 응! 그거 음성 바뀌는 거 맞아. 뭐가... 음...")).toBe(true);
+    expect(looksLikePrematureCutoff("설명하려다가 뭔가...")).toBe(true);
     expect(looksLikePrematureCutoff("응, 그건 정말 재미있어!")).toBe(false);
     expect(looksLikePrematureCutoff("그렇게 하면 돼요")).toBe(false);
+    expect(looksLikePrematureCutoff("음, 그럴 수도 있어.")).toBe(false);
   });
 
   it("uses a bounded repair and a pause-tolerant 2.5 idle completion fallback", () => {

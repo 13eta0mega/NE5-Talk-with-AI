@@ -6,6 +6,7 @@ const SETTINGS_KEY = "deskpet:mobile-settings:v1";
 const API_KEY_STORAGE_KEY = "deskpet:mobile-gemini-api-key:v1";
 const SESSION_PREFIX = "deskpet:mobile-session:v1:";
 const VOICE_PROFILE_VERSION_KEY = "deskpet:voice-profile-version";
+const USER_NAME_STORAGE_KEY = "deskpet:user-name:v1";
 const API_TIMEOUT_MS = 12000;
 
 type StoredSettings = Pick<SecureSettingsPublic,
@@ -44,6 +45,15 @@ function writeJson(key: string, value: unknown): void {
 
 function readStoredApiKey(): string | undefined {
   const value = localStorage.getItem(API_KEY_STORAGE_KEY)?.trim();
+  return value || undefined;
+}
+
+function readStoredUserName(): string | undefined {
+  const value = localStorage.getItem(USER_NAME_STORAGE_KEY)
+    ?.replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
   return value || undefined;
 }
 
@@ -154,6 +164,7 @@ export function installMobileBridge(): void {
             voicePitch: request.voicePitch ?? settings.selectedVoicePitch,
             modelId: request.modelId,
             apiKey,
+            userName: readStoredUserName(),
             resumeHandle: session.resumeHandle,
             resumeVoiceName: session.resumeVoiceName,
             resumeModelId: session.resumeModelId,

@@ -142,6 +142,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function installMobileBridge(): void {
   if (window.deskPet) return;
+  window.addEventListener("deskpet:user-profile-changed", clearResumeState);
 
   window.deskPet = {
     auth: {

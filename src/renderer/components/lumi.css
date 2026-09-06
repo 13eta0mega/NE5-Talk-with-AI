@@ -1,0 +1,16 @@
+.lumi-character { display: block; overflow: visible; max-width: 100%; height: auto; isolation: isolate; }
+.lumi-character [data-part] { transform-box: view-box; }
+.lumi-character .lumi-pet-target { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
+.lumi-character .lumi-focus-ring { opacity: 0; pointer-events: none; }
+.lumi-character .lumi-pet-target:focus-visible .lumi-focus-ring { opacity: 1; }
+.character-preview .lumi-character { width: 124px; max-height: 132px; }
+.character-card[aria-pressed="true"] { outline: 2px solid #7dbbad; outline-offset: 2px; }
+/* The sixth card remains equally weighted; two-column mobile layout is unchanged. */
+.picker-modal .character-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 760px) {
+  .picker-modal .character-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .character-preview .lumi-character { width: 112px; max-height: 118px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lumi-character, .lumi-character * { animation: none !important; transition: none !important; }
+}

@@ -7,6 +7,7 @@ import { EMOTION_META } from "../core/emotion";
 import { CharacterPicker } from "./components/CharacterPicker";
 import { ChatPanel, type ChatMessage } from "./components/ChatPanel";
 import { PetStage } from "./components/PetStage";
+import { LUMI_ACTION_LABELS } from "./components/lumiModel";
 import { IDLE_ACTIONS, type IdleAction } from "./components/GreusCat";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { EMOTION_AUDIO_ACTIVITY_THRESHOLD, shouldResetEmotion } from "./emotionReset";
@@ -72,6 +73,7 @@ export default function App() {
   const mouthLevelRef = useRef(0);
   const lastEmotionActivityAt = useRef(Date.now());
   const profile = characterById(characterId);
+  const motionLabels = profile.kind === "lumi" ? LUMI_ACTION_LABELS : IDLE_ACTION_LABEL;
   const phase = demoPhase ?? snapshot.phase;
   const audioCapabilities = coordinator.audio.deviceCapabilities;
   const micDiagnostics = coordinator.audio.gate.diagnostics();
@@ -347,7 +349,7 @@ export default function App() {
 
       <section className="emotion-lab"><div><span className="eyebrow">EXPRESSION LAB</span><strong>{EMOTION_META[emotion].label}</strong></div><div className="emotion-scroll">{EMOTION_IDS.map((id) => <button key={id} className={emotion === id ? "active" : ""} onClick={() => { setIdlePreview("auto"); setEmotion(id); setEmotionIntensity(1); }}>{EMOTION_META[id].label}</button>)}</div></section>
 
-      <section className="emotion-lab motion-lab"><div><span className="eyebrow">MOTION LAB</span><strong>{idlePreview === "auto" ? "자동 동작" : idlePreview === "none" ? "준비 중" : IDLE_ACTION_LABEL[idlePreview]}</strong></div><div className="emotion-scroll"><button className={idlePreview === "auto" ? "active" : ""} onClick={() => previewIdleAction("auto")}>자동</button>{IDLE_ACTIONS.map((action) => <button key={action} className={idlePreview === action ? "active" : ""} onClick={() => previewIdleAction(action)}>{IDLE_ACTION_LABEL[action]}</button>)}</div></section>
+      <section className="emotion-lab motion-lab"><div><span className="eyebrow">MOTION LAB</span><strong>{idlePreview === "auto" ? "자동 동작" : idlePreview === "none" ? "준비 중" : motionLabels[idlePreview]}</strong></div><div className="emotion-scroll"><button className={idlePreview === "auto" ? "active" : ""} onClick={() => previewIdleAction("auto")}>자동</button>{IDLE_ACTIONS.map((action) => <button key={action} className={idlePreview === action ? "active" : ""} onClick={() => previewIdleAction(action)}>{motionLabels[action]}</button>)}</div></section>
 
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
       {pickerOpen && <CharacterPicker selected={characterId} customColor={customColor} onCustomColor={(color) => { setCustomColor(color); localStorage.setItem("deskpet:custom-coat", color); void selectCharacter("greus-custom"); }} onSelect={(id) => void selectCharacter(id)} onClose={() => setPickerOpen(false)} />}

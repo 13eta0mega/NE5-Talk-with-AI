@@ -11,7 +11,7 @@ permissions:
 jobs:
   character-qa:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,14 +21,33 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build:web
-      - name: Package reproducible review workspace
-        run: |
-          mkdir -p /tmp/lumi-review
-          git archive HEAD | tar -x -C /tmp/lumi-review
-          cp -a node_modules /tmp/lumi-review/node_modules
-          tar -czf /tmp/lumi-review.tar.gz -C /tmp/lumi-review .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          name: lumi-review-workspace
-          path: /tmp/lumi-review.tar.gz
-          retention-days: 1
+          python-version: '3.12'
+      - run: python -m pip install playwright==1.57.0
+      - run: python -m playwright install --with-deps chromium firefox webkit
+      - name: Browser motion and application regression tests
+        run: |
+          mkdir -p artifacts/lumi
+          npm run dev > artifacts/lumi/vite.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID" 2>/dev/null || true' EXIT
+          python - <<'PY'
+          import time, urllib.request
+          for attempt in range(60):
+              try:
+                  urllib.request.urlopen('http://127.0.0.1:5173', timeout=1)
+                  break
+              except Exception:
+                  time.sleep(1)
+          else:
+              raise SystemExit('Vite did not start')
+          PY
+          python tests/lumi.browser.py --browsers chromium firefox webkit
+      - name: Save browser screenshots and assertion report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumi-browser-review
+          path: artifacts/lumi
+          retention-days: 7

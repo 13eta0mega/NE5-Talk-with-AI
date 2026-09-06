@@ -1,4 +1,5 @@
 import { CHARACTERS } from "../../characters/catalog";
+import { Lumi } from "./Lumi";
 import { GreusCat } from "./GreusCat";
 
 export function CharacterPicker({
@@ -18,14 +19,14 @@ export function CharacterPicker({
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
       <section className="picker-modal" role="dialog" aria-modal="true" aria-labelledby="character-title">
         <div className="modal-heading">
-          <div><span className="eyebrow">GREUS CAT COATS</span><h2 id="character-title">오늘 함께할 고양이</h2></div>
+          <div><span className="eyebrow">CHOOSE YOUR COMPANION</span><h2 id="character-title">오늘 함께할 친구</h2></div>
           <button className="icon-button" onClick={onClose} aria-label="닫기">×</button>
         </div>
         <div className="character-grid">
           {CHARACTERS.map((pet) => (
-            <button key={pet.id} className={`character-card ${selected === pet.id ? "selected" : ""}`} onClick={() => onSelect(pet.id)}>
+            <button key={pet.id} className={`character-card ${selected === pet.id ? "selected" : ""}`} onClick={() => onSelect(pet.id)} aria-pressed={selected === pet.id}>
               <span className="character-preview" aria-hidden="true">
-                <GreusCat coat={pet.coat} customColor={customColor} emotion="idle" size={138} durationMs={0} enableIdleActions={false} />
+                {pet.kind === "lumi" ? <Lumi size={124} animated={false} interactive={false} /> : <GreusCat coat={pet.coat} customColor={customColor} emotion="idle" size={138} durationMs={0} enableIdleActions={false} />}
               </span>
               <span><strong>{pet.displayName}</strong><small>{pet.teaser}</small></span>
             </button>

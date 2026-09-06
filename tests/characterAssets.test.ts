@@ -7,10 +7,12 @@ import { MIN_AUDIBLE_SPEECH_LEVEL } from "../src/renderer/components/PetStage";
 import { PERSONA_IDS } from "../electron/personaVault";
 
 describe("Greus Cat character replacement", () => {
-  it("offers only the five Greus Cat coat variants", () => {
-    expect(CHARACTERS).toHaveLength(5);
-    expect(CHARACTERS.map((item) => item.coat)).toEqual([...COATS]);
-    expect(CHARACTERS.every((item) => item.id.startsWith("greus-"))).toBe(true);
+  it("preserves the five Greus Cat coats and adds Lumi without losing persona parity", () => {
+    expect(CHARACTERS).toHaveLength(6);
+    const cats = CHARACTERS.filter((item) => item.kind === "cat");
+    expect(cats).toHaveLength(5);
+    expect(cats.map((item) => item.coat)).toEqual([...COATS]);
+    expect(cats.every((item) => item.id.startsWith("greus-"))).toBe(true);
     expect(CHARACTERS.map((item) => item.id)).toEqual([...PERSONA_IDS]);
     expect(CHARACTERS[0].displayName).toBe("그린냥");
   });

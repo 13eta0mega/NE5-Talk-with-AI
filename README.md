@@ -1,8 +1,16 @@
-# Greus Cat · Gemini Live DeskPet
+# Greus Cat + Lumi · Gemini Live DeskPet
 
 `NE5-Talk-with-AI`의 Gemini Live 대화 기능과 `NE5-Deskpet_V01`에서 완성한 그루스 고양이 SVG 캐릭터를 결합한 React + TypeScript PWA입니다.
 
-## 캐릭터 기능
+## Lumi
+
+Meet **Lumi**, an original starlight jelly spirit, in the Character picker.
+All five Greus Cat coats remain available. Lumi has 26 continuously morphing
+emotions, seven original action performances, rendered-PCM lip sync, microphone
+reactions, keyboard/touch petting, and an independent server-side persona.
+See [the rig design and verification guide](docs/LUMI.md).
+
+## Greus Cat
 
 - 기존 14개 캐릭터를 그루스 고양이 단일 semantic SVG 리그로 완전 교체
 - 초록냥, 치즈냥, 삼색냥, 검은냥, 커스텀냥 5개 털색

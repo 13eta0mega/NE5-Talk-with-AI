@@ -59,7 +59,14 @@ def run(p, name, args, out):
             before=attr('eye-left','d');props(speechLevel=0);advance()
             check(float(page.locator('#specimen svg').get_attribute('data-mouth-open'))==0,'silence closes mouth: '+emotion)
             check(before==attr('eye-left','d'),'speech preserves eyes: '+emotion)
-        page.emulate_media(reduced_motion='no-preference');props(emotion='idle',phase='disconnected',idleAction='none');advance(1400)
+        # Let the browser dispatch its native MediaQueryList change before freezing
+        # time again. Fake-clock advancement alone can starve Firefox's style task.
+        page.emulate_media(reduced_motion='no-preference');page.clock.resume()
+        props(emotion='idle',phase='disconnected',idleAction='none')
+        page.wait_for_function('document.querySelector("#specimen svg")?.dataset.reducedMotion === "false"')
+        page.clock.pause_at(page.evaluate('new Date(Date.now()+100).toISOString()'))
+        advance(1400)
+        check(page.locator('#specimen svg').get_attribute('data-reduced-motion')=='false','normal-motion precondition established after media change')
         no_snap=page.evaluate('''()=>{const eye=document.querySelector('#specimen [data-part="eye-left"]'),body=document.querySelector('#specimen [data-part="body"]');const a=eye.getAttribute('d'),b=body.getAttribute('d');window.__moru.set({emotion:'startled'});return a===eye.getAttribute('d')&&b===body.getAttribute('d')}''')
         check(no_snap,'React commit does not reset in-flight geometry');advance(500)
         props(emotion='idle');advance(1500)

@@ -7,6 +7,7 @@ import { UserNameSetting } from "./components/UserNameSetting";
 import "./styles.css";
 import "./chat.css";
 import "./lipsync.css";
+import "./responsive.css";
 
 const nativeDesktopBridge = Boolean(window.deskPet);
 installMobileBridge();

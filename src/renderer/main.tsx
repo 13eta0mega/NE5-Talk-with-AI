@@ -21,7 +21,12 @@ if ("serviceWorker" in navigator && !nativeDesktopBridge) {
     window.location.reload();
   });
   window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("./sw.js").then((registration) => registration.update());
+    void navigator.serviceWorker.register("./sw.js")
+      .then((registration) => registration.update())
+      .catch((error: unknown) => {
+        // Offline caching is optional. A failed/aborted worker must not reject globally.
+        console.warn("[deskpet:pwa] Service worker unavailable; running online only.", error);
+      });
   });
 }
 

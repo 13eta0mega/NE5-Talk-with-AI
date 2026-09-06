@@ -1,12 +1,15 @@
-import type { CharacterProfile } from "../../characters/catalog";
+import { MORU_ID, type CharacterProfile } from "../../characters/catalog";
 import type { ConversationPhase, EmotionId } from "../../core/types";
 import { GreusCat, type IdleAction } from "./GreusCat";
+
+import { MoruRabbit } from "./MoruRabbit";
 
 export const MIN_AUDIBLE_SPEECH_LEVEL = .012;
 
 export function PetStage({
   profile,
   emotion,
+  intensity,
   phase,
   mouthLevel,
   inputLevel,
@@ -26,6 +29,9 @@ export function PetStage({
   const listening = phase === "listening";
   const renderedEmotion: EmotionId = speaking && emotion === "listening" ? "idle" : emotion;
   const audibleSpeechLevel = speaking ? Math.max(0, Math.min(1, mouthLevel)) : 0;
+
+  if (profile.id === MORU_ID) return <MoruRabbit emotion={renderedEmotion} intensity={intensity} phase={phase}
+    speechLevel={audibleSpeechLevel} microphoneLevel={inputLevel} idleAction={idleAction} className="pet-svg" />;
 
   return (
     <GreusCat

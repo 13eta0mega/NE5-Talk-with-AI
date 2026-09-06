@@ -1,0 +1,36 @@
+name: Verify 3D lab
+on:
+  push:
+    branches: [feat/low-poly-3d-lab-20260906]
+  pull_request:
+    paths: ['src/three/**', 'src/mobile/**', 'tests/three*', '.github/workflows/3d-lab.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:web
+      - name: Pack review dependencies
+        run: |
+          mkdir -p /tmp/ne5-three-deps
+          npm install --prefix /tmp/ne5-three-deps --ignore-scripts --no-audit --no-fund three@0.180.0 @types/three@0.180.0 playwright@1.55.0
+          mkdir -p review
+          git archive --format=tar HEAD > review/source.tar
+          cp /tmp/ne5-three-deps/package-lock.json review/three-package-lock.json
+          tar -czf review/dependencies.tgz node_modules -C /tmp/ne5-three-deps node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: three-lab-review
+          path: review/
+          retention-days: 2

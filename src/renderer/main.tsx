@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import CompanionStudio from "./three/CompanionStudio";
 import { installMobileBridge } from "../mobile/installMobileBridge";
 import { installProactiveLiveConversation } from "../core/conversation/proactiveLive";
 import { UserNameSetting } from "./components/UserNameSetting";
@@ -24,6 +25,7 @@ if ("serviceWorker" in navigator && !nativeDesktopBridge) {
   });
 }
 
+const classic = new URLSearchParams(window.location.search).get("view") === "classic";
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode><><App /><UserNameSetting /></></React.StrictMode>,
+  <React.StrictMode><>{classic ? <App /> : <CompanionStudio />}<UserNameSetting /></></React.StrictMode>,
 );

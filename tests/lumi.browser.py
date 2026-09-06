@@ -4,6 +4,7 @@ The fixture and its test API are excluded from the production Vite entry.
 """
 import argparse
 import json
+import traceback
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -26,6 +27,8 @@ def run(browser_type, name, args, out):
             kwargs['executable_path'] = args.chromium_executable
     browser = browser_type.launch(**kwargs)
     context = browser.new_context(viewport={'width': 740, 'height': 500}, device_scale_factor=1)
+    app_context = None
+    app = None
     page = context.new_page()
     errors = []
     page.on('pageerror', lambda err: errors.append(str(err)))
@@ -136,10 +139,8 @@ def run(browser_type, name, args, out):
             set_props(emotion=EMOTIONS[index % 26], idleAction='none'); advance(17)
         check(numeric_svg(), '104 rapid retargets leave no malformed SVG')
         check(page.evaluate('window.__activeLumiFrames()') == 1, 'retargets do not multiply RAF loops')
-        # Intensity extremes and invalid external numeric values.
         page.evaluate('window.__lumiQA.set({intensity:NaN,speechLevel:Infinity,microphoneLevel:-Infinity,phase:"speaking"})'); advance(500)
         check(numeric_svg(), 'invalid external levels are sanitized')
-        # Visibility event is deterministic here; browser-background behavior varies by CI.
         page.evaluate('Object.defineProperty(document,"hidden",{configurable:true,value:true});document.dispatchEvent(new Event("visibilitychange"))')
         advance(1000)
         check(page.evaluate('window.__activeLumiFrames()') == 0, 'hidden document suspends RAF')
@@ -148,21 +149,21 @@ def run(browser_type, name, args, out):
         page.evaluate('window.__lumiQA.unmount()'); advance(200)
         check(page.evaluate('window.__activeLumiFrames()') == 0, 'unmount cancels all RAF callbacks')
         check(not errors, 'no uncaught fixture browser errors: ' + repr(errors))
-        # Real application integration (only localhost CI, not the isolated offline fixture).
+        # A separate context prevents the fixture's mocked clock from affecting app timers.
         if not args.offline:
-            app = context.new_page()
+            app_context = browser.new_context(viewport={'width': 1440, 'height': 1040}, device_scale_factor=1)
+            app = app_context.new_page()
             app_errors = []
             app.on('pageerror', lambda e: app_errors.append(str(e)))
             app.route('**/api/mobile-status', lambda route: route.fulfill(json={'hasApiKey': False}))
             app.goto(args.base_url)
             app.get_by_role('button', name='\uce90\ub9ad\ud130', exact=True).click()
             check(app.locator('.character-card').count() == 6, 'picker preserves cats and adds Lumi')
-            app.get_by_role('button', name='\ub8e8\ubbf8', exact=False).click()
+            app.locator('.character-card').filter(has_text='\ub8e8\ubbf8').click()
             app.locator('.pet-viewport [data-character=lumi]').wait_for()
             app.reload()
             app.locator('.pet-viewport [data-character=lumi]').wait_for()
             check(True, 'Lumi selection persists through reload')
-            app.set_viewport_size({'width': 1440, 'height': 1040})
             app.screenshot(path=str(out / (name + '-app-desktop.png')), full_page=True)
             for width in [360, 390, 768]:
                 app.set_viewport_size({'width': width, 'height': 844})
@@ -177,11 +178,21 @@ def run(browser_type, name, args, out):
             app.wait_for_function('document.querySelector(".pet-viewport [data-character=lumi]")?.dataset.speaking === "false"', timeout=12000)
             check(app.locator('.pet-viewport [data-character=lumi]').get_attribute('data-speaking') == 'false', 'demo returns from speaking state')
             app.get_by_role('button', name='\uce90\ub9ad\ud130', exact=True).click()
-            app.get_by_role('button', name='\uadf8\ub9b0\ub0e5', exact=False).click()
-            check(app.locator('.pet-viewport .greus-cat').count() == 1, 'existing cat still renders after switching back')
+            app.locator('.character-card').filter(has_text='\uadf8\ub9b0\ub0e5').click()
+            app.locator('.pet-viewport .greus-cat').wait_for()
+            check(True, 'existing cat still renders after switching back')
             check(not app_errors, 'no uncaught app errors: ' + repr(app_errors))
         return {'browser': name, 'mode': 'offline fixture' if args.offline else 'localhost fixture + application', 'passed': len(checks), 'checks': checks, 'errors': errors}
+    except Exception:
+        try:
+            (app or page).screenshot(path=str(out / (name + '-failure.png')), full_page=True)
+        except Exception:
+            pass
+        (out / (name + '-partial-report.json')).write_text(json.dumps({'passed': len(checks), 'checks': checks, 'errors': errors, 'failure': traceback.format_exc()}, indent=2))
+        raise
     finally:
+        if app_context:
+            app_context.close()
         context.close(); browser.close()
 
 if __name__ == '__main__':
@@ -193,9 +204,16 @@ if __name__ == '__main__':
     args = parser.parse_args()
     out = Path('artifacts/lumi'); out.mkdir(parents=True, exist_ok=True)
     results = []
+    failed = []
     with sync_playwright() as playwright:
         for name in args.browsers:
-            result = run(getattr(playwright, name), name, args, out)
-            results.append(result)
-            print(name + ': ' + str(result['passed']) + ' browser assertions passed', flush=True)
+            try:
+                result = run(getattr(playwright, name), name, args, out)
+                results.append(result)
+                print(name + ': ' + str(result['passed']) + ' browser assertions passed', flush=True)
+            except Exception:
+                failed.append(name)
+                traceback.print_exc()
             (out / 'browser-report.json').write_text(json.dumps(results, indent=2))
+    if failed:
+        raise SystemExit('Browser QA failed: ' + ', '.join(failed))

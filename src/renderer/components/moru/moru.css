@@ -1,0 +1,8 @@
+.moru-rabbit { display: block; max-width: 100%; height: auto; overflow: visible; flex-shrink: 0; user-select: none; -webkit-user-select: none; }
+.moru-rabbit [data-part] { pointer-events: none; }
+.moru-touch { cursor: grab; outline: none; touch-action: pan-y; }
+.moru-touch:active { cursor: grabbing; }
+.moru-focus-ring { opacity: 0; pointer-events: none; }
+.moru-touch:focus-visible .moru-focus-ring { opacity: 1; }
+.character-preview .moru-rabbit { width: 138px; height: 138px; }
+.pet-svg.moru-rabbit { filter: none; }

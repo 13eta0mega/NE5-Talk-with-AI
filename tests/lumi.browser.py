@@ -104,12 +104,19 @@ def run(browser_type, name, args, out):
         page.emulate_media(reduced_motion='no-preference')
         set_props(emotion='idle', phase='disconnected', microphoneLevel=0, speechLevel=0, idleAction='none')
         advance(300)
-        # React commits may update labels, but morph geometry belongs to the RAF rig.
-        eye_before = attr('eye-left', 'd'); root_before = attr('rig-root')
-        set_props(emotion='startled')
-        check(attr('eye-left', 'd') == eye_before and attr('rig-root') == root_before, 'retarget does not snap SVG attributes during React commit')
+        # One JS task: protocol latency must not mistake a legitimate RAF for a React snap.
+        commit = page.evaluate("""() => {
+          const svg = document.querySelector('#specimen svg');
+          const read = () => [svg.querySelector('[data-part=eye-left]').getAttribute('d'),
+            svg.querySelector('[data-part=rig-root]').getAttribute('transform')].join('|');
+          const before = read();
+          window.__lumiQA.set({emotion: 'startled'});
+          return {stable: before === read(), before};
+        }""")
+        check(commit['stable'], 'retarget does not snap SVG attributes during React commit')
         advance(100)
-        check(attr('eye-left', 'd') != eye_before, 'retarget interpolates on animation frames')
+        current = attr('eye-left', 'd') + '|' + attr('rig-root')
+        check(current != commit['before'], 'retarget interpolates on animation frames')
         set_props(emotion='idle'); advance(1000)
         before = attr('rig-root'); advance(250)
         check(before != attr('rig-root'), 'idle float is animated')

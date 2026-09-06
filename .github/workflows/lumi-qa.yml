@@ -1,0 +1,34 @@
+name: Lumi character QA
+
+on:
+  push:
+    branches: [feat/lumi-starlight-companion]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  character-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:web
+      - name: Package reproducible review workspace
+        run: |
+          mkdir -p /tmp/lumi-review
+          git archive HEAD | tar -x -C /tmp/lumi-review
+          cp -a node_modules /tmp/lumi-review/node_modules
+          tar -czf /tmp/lumi-review.tar.gz -C /tmp/lumi-review .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumi-review-workspace
+          path: /tmp/lumi-review.tar.gz
+          retention-days: 1
